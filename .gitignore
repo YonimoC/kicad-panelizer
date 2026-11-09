@@ -1,0 +1,18 @@
+# Build output
+dist/
+*.zip
+*.pyc
+__pycache__/
+
+# Test output
+.pytest_cache/
+.coverage
+
+# Editors
+.vscode/
+.idea/
+
+# Local test boards and backups
+tests/output/
+*.kicad_pcb.backup-*
+

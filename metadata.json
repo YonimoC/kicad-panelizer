@@ -1,0 +1,42 @@
+{
+    "$schema": "https://go.kicad.org/pcm/schemas/v2",
+    "name": "KiCad Panelizer",
+    "description": "参数化 V 割拼板、工艺边与顶/底面 Mark 点",
+    "description_full": "在 KiCad PCB 编辑器中按当前板级 Edge.Cuts 外边框生成参数化拼板。仅复制外边框，保留原始单板内容；支持行/列数、行/列距、四边工艺边、1 mm 铜/3 mm 开窗的顶面及底面 Mark 点，并在写入前自动备份当前 PCB。界面支持中文与 English。兼容 KiCad 8.0 ~ 11（SWIG Action Plugin）。",
+    "identifier": "com.github.YonimoC.kicad-panelizer",
+    "type": "plugin",
+    "author": {
+        "name": "LWH",
+        "contact": {
+            "web": "https://github.com/YonimoC/kicad-panelizer"
+        }
+    },
+    "maintainer": {
+        "name": "LWH",
+        "contact": {
+            "web": "https://github.com/YonimoC/kicad-panelizer"
+        }
+    },
+    "category": "pcb",
+    "license": "MIT",
+    "resources": {
+        "homepage": "https://github.com/YonimoC/kicad-panelizer",
+        "readme": "https://github.com/YonimoC/kicad-panelizer#readme"
+    },
+    "tags": [
+        "pcb",
+        "panelizer",
+        "vcut",
+        "fiducials"
+    ],
+    "versions": [
+        {
+            "version": "1.0.1",
+            "status": "stable",
+            "kicad_version": "8.0",
+            "kicad_version_max": "11.99",
+            "runtime": "swig"
+        }
+    ]
+}
+
