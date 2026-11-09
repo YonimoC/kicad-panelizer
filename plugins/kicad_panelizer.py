@@ -22,6 +22,7 @@ from .panelizer import (
 
 
 APP_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
+PLUGIN_VERSION = "1.0.4"
 
 
 def _settings_path() -> Path:
@@ -48,7 +49,7 @@ def save_settings(values: dict[str, object]) -> None:
         pass
 
 
-class PanelPreview(wx.Panel):
+class PanelPreview(wx.StaticBitmap):
     def __init__(self, parent, translator: Translator) -> None:
         super().__init__(parent)
         self.tr = translator
@@ -56,9 +57,9 @@ class PanelPreview(wx.Panel):
         self.layout: PanelLayout | None = None
         self.single_mode = False
         self.error = ""
-        self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
+        self._bitmap: wx.Bitmap | None = None
         self.SetMinSize((460, 410))
-        self.Bind(wx.EVT_PAINT, self._on_paint)
+        self.Bind(wx.EVT_SIZE, self._on_size)
 
     def set_data(
         self,
@@ -70,20 +71,35 @@ class PanelPreview(wx.Panel):
         self.layout = layout
         self.single_mode = False
         self.error = error
-        self.Refresh()
+        self._refresh_bitmap()
 
     def set_single_board(self, board: BBox) -> None:
         self.board = board
         self.layout = None
         self.single_mode = True
         self.error = ""
-        self.Refresh()
+        self._refresh_bitmap()
 
-    def _on_paint(self, _event) -> None:
-        dc = wx.BufferedPaintDC(self)
+    def _on_size(self, event) -> None:
+        event.Skip()
+        self._refresh_bitmap()
+
+    def _refresh_bitmap(self) -> None:
+        size = self.GetClientSize()
+        if size.width < 2 or size.height < 2:
+            return
+        bitmap = wx.Bitmap(size.width, size.height)
+        dc = wx.MemoryDC(bitmap)
+        try:
+            self._render(dc, size.width, size.height)
+        finally:
+            dc.SelectObject(wx.NullBitmap)
+        self._bitmap = bitmap
+        self.SetBitmap(bitmap)
+
+    def _render(self, dc: wx.DC, width: int, height: int) -> None:
         dc.SetBackground(wx.Brush(wx.Colour(248, 249, 251)))
         dc.Clear()
-        width, height = self.GetClientSize()
         if width < 40 or height < 40:
             return
 
@@ -153,6 +169,9 @@ class PanelPreview(wx.Panel):
         dc.SetPen(wx.Pen(wx.Colour(188, 198, 212), 1))
         dc.SetBrush(wx.Brush(dock))
         dc.DrawRectangle(*rect(panel))
+        dc.SetPen(wx.Pen(edge, 3))
+        dc.SetBrush(wx.TRANSPARENT_BRUSH)
+        dc.DrawRectangle(*rect(panel))
 
         dc.SetFont(self.GetFont())
         for row in range(config.rows):
@@ -181,10 +200,6 @@ class PanelPreview(wx.Panel):
                         cell_rect[0] + (cell_rect[2] - text_width) // 2,
                         cell_rect[1] + (cell_rect[3] - text_height) // 2,
                     )
-
-        dc.SetPen(wx.Pen(edge, 3))
-        dc.SetBrush(wx.TRANSPARENT_BRUSH)
-        dc.DrawRectangle(*rect(panel))
 
         for spec in mark_positions(layout):
             center = wx.Point(px(spec.x), py(spec.y))
@@ -259,11 +274,13 @@ class PanelizerDialog(wx.Dialog):
             inc=increment,
         )
         control.SetDigits(digits)
+        control.SetMinSize((150, -1))
+        control.SetMaxSize((150, -1))
         control.Bind(wx.EVT_SPINCTRLDOUBLE, self._on_change)
         control.Bind(wx.EVT_TEXT, self._on_change)
         grid = getattr(self, "_active_grid")
         grid.Add(label, 0, wx.ALIGN_CENTER_VERTICAL)
-        grid.Add(control, 1, wx.EXPAND)
+        grid.Add(control, 0, wx.ALIGN_CENTER_VERTICAL)
         setattr(self, f"_ctl_{key}", control)
         return control
 
@@ -276,6 +293,7 @@ class PanelizerDialog(wx.Dialog):
         return control
 
     def _build(self, config: PanelConfig) -> None:
+        self.SetBackgroundColour(wx.Colour(247, 249, 252))
         outer = wx.BoxSizer(wx.VERTICAL)
         header = wx.BoxSizer(wx.HORIZONTAL)
         title = wx.StaticText(self, label="PCB Panelizer")
@@ -283,8 +301,11 @@ class PanelizerDialog(wx.Dialog):
         title_font.SetPointSize(title_font.GetPointSize() + 6)
         title_font.SetWeight(wx.FONTWEIGHT_BOLD)
         title.SetFont(title_font)
+        title.SetForegroundColour(wx.Colour(27, 61, 90))
         self._labels["dialog_title"] = title
         self._labels["dialog_subtitle"] = wx.StaticText(self)
+        self._labels["dialog_subtitle"].SetMinSize((360, -1))
+        self._labels["dialog_subtitle"].SetMaxSize((650, -1))
         subtitle_sizer = wx.BoxSizer(wx.VERTICAL)
         subtitle_sizer.Add(title, 0, wx.BOTTOM, 4)
         subtitle_sizer.Add(self._labels["dialog_subtitle"], 0)
@@ -304,19 +325,18 @@ class PanelizerDialog(wx.Dialog):
         header.Add(self._language_choice, 0, wx.ALIGN_CENTER_VERTICAL)
         outer.Add(header, 0, wx.EXPAND | wx.ALL, 18)
 
-        self._scroll = wx.ScrolledWindow(
-            self,
-            style=wx.BORDER_NONE,
-        )
-        self._scroll.SetScrollRate(12, 12)
-        self._scroll.SetBackgroundColour(self.GetBackgroundColour())
+        self._body_panel = wx.Panel(self)
+        self._body_panel.SetBackgroundColour(self.GetBackgroundColour())
         body = wx.BoxSizer(wx.HORIZONTAL)
+        self._settings_panel = wx.Panel(self._body_panel)
+        self._settings_panel.SetBackgroundColour(self.GetBackgroundColour())
+        self._settings_panel.SetMinSize((560, -1))
         settings = wx.BoxSizer(wx.VERTICAL)
+        self._settings_panel.SetSizer(settings)
 
-        array_box = wx.StaticBoxSizer(wx.VERTICAL, self._scroll)
+        array_box = wx.StaticBoxSizer(wx.VERTICAL, self._settings_panel)
         self._group_boxes["array_group"] = array_box
-        array_grid = wx.FlexGridSizer(cols=2, vgap=8, hgap=12)
-        array_grid.AddGrowableCol(1)
+        array_grid = wx.FlexGridSizer(cols=4, vgap=8, hgap=10)
         self._active_grid = array_grid
         self._spin(array_box.GetStaticBox(), "columns", config.columns, 1, 100, 1, 0)
         self._spin(array_box.GetStaticBox(), "rows", config.rows, 1, 100, 1, 0)
@@ -331,17 +351,20 @@ class PanelizerDialog(wx.Dialog):
             array_box.GetStaticBox(),
             choices=[self.tr("vcut_mode"), self.tr("single_board_mode")],
         )
+        self._mode_choice.SetMinSize((150, -1))
+        self._mode_choice.SetMaxSize((150, -1))
         self._mode_choice.SetSelection(0)
         self._mode_choice.Bind(wx.EVT_CHOICE, self._on_mode_change)
-        array_grid.Add(self._labels["panel_mode"], 0, wx.ALIGN_CENTER_VERTICAL)
-        array_grid.Add(self._mode_choice, 1, wx.EXPAND)
         array_box.Add(array_grid, 0, wx.EXPAND | wx.ALL, 10)
+        mode_row = wx.BoxSizer(wx.HORIZONTAL)
+        mode_row.Add(self._labels["panel_mode"], 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 10)
+        mode_row.Add(self._mode_choice, 0, wx.ALIGN_CENTER_VERTICAL)
+        array_box.Add(mode_row, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
         settings.Add(array_box, 0, wx.EXPAND | wx.BOTTOM, 12)
 
-        rail_box = wx.StaticBoxSizer(wx.VERTICAL, self._scroll)
+        rail_box = wx.StaticBoxSizer(wx.VERTICAL, self._settings_panel)
         self._group_boxes["rail_group"] = rail_box
         rail_grid = wx.FlexGridSizer(cols=2, vgap=8, hgap=12)
-        rail_grid.AddGrowableCol(1)
         self._active_grid = rail_grid
         self._spin(
             rail_box.GetStaticBox(),
@@ -352,25 +375,36 @@ class PanelizerDialog(wx.Dialog):
             0.5,
             2,
         )
-        rail_side_row = wx.BoxSizer(wx.HORIZONTAL)
-        rail_side_row.Add(self._check(rail_box.GetStaticBox(), "left", config.rail_left), 0, wx.RIGHT, 12)
-        rail_side_row.Add(self._check(rail_box.GetStaticBox(), "right", config.rail_right), 0, wx.RIGHT, 12)
-        rail_side_row.Add(self._check(rail_box.GetStaticBox(), "top", config.rail_top), 0, wx.RIGHT, 12)
-        rail_side_row.Add(self._check(rail_box.GetStaticBox(), "bottom", config.rail_bottom), 0)
         self._labels["rail_sides"] = wx.StaticText(rail_box.GetStaticBox())
-        rail_grid.Add(self._labels["rail_sides"], 0, wx.ALIGN_TOP)
-        rail_grid.Add(rail_side_row, 1, wx.EXPAND)
         rail_box.Add(rail_grid, 0, wx.EXPAND | wx.ALL, 10)
+        rail_box.Add(
+            self._labels["rail_sides"],
+            0,
+            wx.LEFT | wx.RIGHT | wx.BOTTOM,
+            10,
+        )
+        rail_sides_grid = wx.FlexGridSizer(cols=4, vgap=6, hgap=8)
+        rail_sides_grid.Add(
+            self._check(rail_box.GetStaticBox(), "left", config.rail_left)
+        )
+        rail_sides_grid.Add(
+            self._check(rail_box.GetStaticBox(), "right", config.rail_right)
+        )
+        rail_sides_grid.Add(
+            self._check(rail_box.GetStaticBox(), "top", config.rail_top)
+        )
+        rail_sides_grid.Add(
+            self._check(rail_box.GetStaticBox(), "bottom", config.rail_bottom)
+        )
+        rail_box.Add(rail_sides_grid, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
         settings.Add(rail_box, 0, wx.EXPAND | wx.BOTTOM, 12)
 
-        mark_box = wx.StaticBoxSizer(wx.VERTICAL, self._scroll)
+        mark_box = wx.StaticBoxSizer(wx.VERTICAL, self._settings_panel)
         self._group_boxes["mark_group"] = mark_box
-        mark_grid = wx.FlexGridSizer(cols=2, vgap=8, hgap=12)
-        mark_grid.AddGrowableCol(1)
-        self._active_grid = mark_grid
         self._check(mark_box.GetStaticBox(), "enable_marks", config.marks_enabled)
-        mark_grid.AddSpacer(1)
-        mark_grid.Add(self._ctl_enable_marks, 1, wx.EXPAND)
+        mark_box.Add(self._ctl_enable_marks, 0, wx.LEFT | wx.RIGHT | wx.TOP, 10)
+        mark_grid = wx.FlexGridSizer(cols=2, vgap=8, hgap=10)
+        self._active_grid = mark_grid
         self._spin(
             mark_box.GetStaticBox(), "copper_diameter", config.mark_copper_mm, 0.2, 5, 0.1, 2
         )
@@ -397,29 +431,46 @@ class PanelizerDialog(wx.Dialog):
         )
         mark_box.Add(mark_grid, 0, wx.EXPAND | wx.ALL, 10)
         self._labels["mark_note"] = wx.StaticText(mark_box.GetStaticBox())
-        self._labels["mark_note"].Wrap(430)
+        self._labels["mark_note"].SetMinSize((500, -1))
+        self._labels["mark_note"].SetMaxSize((500, -1))
         mark_box.Add(self._labels["mark_note"], 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
         settings.Add(mark_box, 0, wx.EXPAND | wx.BOTTOM, 12)
 
-        self._labels["backup_note"] = wx.StaticText(self._scroll)
+        self._labels["backup_note"] = wx.StaticText(self._settings_panel)
         self._labels["backup_note"].SetForegroundColour(wx.Colour(156, 91, 20))
-        self._labels["backup_note"].Wrap(455)
+        self._labels["backup_note"].SetMinSize((500, -1))
+        self._labels["backup_note"].SetMaxSize((500, -1))
         settings.Add(self._labels["backup_note"], 0, wx.EXPAND | wx.BOTTOM, 8)
 
-        preview_box = wx.StaticBoxSizer(wx.VERTICAL, self._scroll)
+        preview_box = wx.StaticBoxSizer(wx.VERTICAL, self._body_panel)
         self._group_boxes["preview"] = preview_box
         self.preview = PanelPreview(preview_box.GetStaticBox(), self.tr)
         preview_box.Add(self.preview, 1, wx.EXPAND | wx.ALL, 8)
 
-        body.Add(settings, 0, wx.EXPAND | wx.RIGHT, 18)
-        body.Add(preview_box, 1, wx.EXPAND)
-        self._scroll.SetSizer(body)
-        outer.Add(self._scroll, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 18)
+        for group in self._group_boxes.values():
+            box = group.GetStaticBox()
+            box.SetBackgroundColour(wx.Colour(255, 255, 255))
+            font = box.GetFont()
+            font.SetWeight(wx.FONTWEIGHT_BOLD)
+            box.SetFont(font)
+            box.SetForegroundColour(wx.Colour(39, 69, 92))
 
-        buttons = self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL)
-        self._ok_button = self.FindWindowById(wx.ID_OK)
-        self._cancel_button = self.FindWindowById(wx.ID_CANCEL)
-        buttons.AddSpacer(8)
+        body.Add(self._settings_panel, 1, wx.EXPAND | wx.RIGHT, 18)
+        body.Add(preview_box, 1, wx.EXPAND)
+        self._body_panel.SetSizer(body)
+        outer.Add(self._body_panel, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 18)
+
+        buttons = wx.BoxSizer(wx.HORIZONTAL)
+        self._cancel_button = wx.Button(self, id=wx.ID_CANCEL)
+        self._cancel_button.SetMinSize((96, 34))
+        self._ok_button = wx.Button(self, id=wx.ID_OK)
+        self._ok_button.SetMinSize((180, 34))
+        self._ok_button.SetBackgroundColour(wx.Colour(20, 139, 158))
+        self._ok_button.SetForegroundColour(wx.Colour(255, 255, 255))
+        self._ok_button.SetFont(self._ok_button.GetFont().Bold())
+        buttons.AddStretchSpacer(1)
+        buttons.Add(self._cancel_button, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 10)
+        buttons.Add(self._ok_button, 0, wx.ALIGN_CENTER_VERTICAL)
         outer.Add(buttons, 0, wx.EXPAND | wx.ALL, 18)
         self.SetSizer(outer)
         self.Bind(wx.EVT_BUTTON, self._on_ok, id=wx.ID_OK)
@@ -430,15 +481,25 @@ class PanelizerDialog(wx.Dialog):
             display_index = 0
         client_width, client_height = wx.Display(display_index).GetClientArea().GetSize()
         self.Layout()
-        self._scroll.FitInside()
-        content_width, content_height = self._scroll.GetSizer().GetMinSize()
-        width = min(max(760, client_width - 40), max(760, content_width + 100))
-        height = min(max(560, client_height - 40), max(560, content_height + 190))
-        self.SetMinSize((760, 560))
+        self._body_panel.Layout()
+        content_width, content_height = self._body_panel.GetSizer().GetMinSize()
+        available_width = max(760, client_width - 32)
+        minimum_width = min(available_width, max(900, content_width + 80))
+        minimum_height = max(700, content_height + 180)
+        preferred_width = min(
+            1280,
+            max(minimum_width, int(client_width * 0.86), content_width + 120),
+        )
+        width = min(available_width, preferred_width)
+        height = min(
+            max(720, client_height - 32),
+            max(minimum_height, content_height + 160),
+        )
+        self.SetMinSize((minimum_width, minimum_height))
         self.SetSize((width, height))
         self.CentreOnScreen()
         self.Layout()
-        self._scroll.FitInside()
+        self._body_panel.Layout()
 
     def _on_language(self, _event) -> None:
         values = ("auto", "zh", "en")
@@ -488,10 +549,37 @@ class PanelizerDialog(wx.Dialog):
             else:
                 control.Enable(True)
 
+    def _set_wrapped_text(self, control, text: str, width: int) -> None:
+        dc = wx.ClientDC(control)
+        dc.SetFont(control.GetFont())
+        lines: list[str] = []
+        for paragraph in text.splitlines() or [""]:
+            current = ""
+            for char in paragraph:
+                candidate = current + char
+                if current and dc.GetTextExtent(candidate)[0] > width:
+                    break_at = current.rfind(" ")
+                    if break_at > 0:
+                        lines.append(current[:break_at])
+                        current = current[break_at + 1:] + char
+                    else:
+                        lines.append(current)
+                        current = char
+                else:
+                    current = candidate
+            lines.append(current)
+        control.SetLabel("\n".join(lines))
+        control.SetMinSize((width, -1))
+        control.SetMaxSize((width, -1))
+
     def _refresh_texts(self) -> None:
-        self.SetTitle(self.tr("dialog_title"))
+        title = f"{self.tr('dialog_title')} · v{PLUGIN_VERSION}"
+        self.SetTitle(title)
         for key, control in self._labels.items():
+            if key in {"dialog_subtitle", "mark_note", "backup_note"}:
+                continue
             control.SetLabel(self.tr(key))
+        self._labels["dialog_title"].SetLabel(title)
         self._mode_choice.SetItems(
             [self.tr("vcut_mode"), self.tr("single_board_mode")]
         )
@@ -504,12 +592,24 @@ class PanelizerDialog(wx.Dialog):
         if self._cancel_button:
             self._cancel_button.SetLabel(self.tr("cancel"))
         note_key = "restore_note" if self.get_mode() == "single" else "backup_note"
-        self._labels["backup_note"].SetLabel(self.tr(note_key))
-        self._labels["mark_note"].Wrap(430)
-        self._labels["backup_note"].Wrap(455)
+        self._set_wrapped_text(
+            self._labels["dialog_subtitle"],
+            self.tr("dialog_subtitle"),
+            640,
+        )
+        self._set_wrapped_text(
+            self._labels["mark_note"],
+            self.tr("mark_note"),
+            500,
+        )
+        self._set_wrapped_text(
+            self._labels["backup_note"],
+            self.tr(note_key),
+            500,
+        )
         self.Layout()
-        if hasattr(self, "_scroll"):
-            self._scroll.FitInside()
+        if hasattr(self, "_body_panel"):
+            self._body_panel.Layout()
 
     def _read_config(self) -> PanelConfig:
         return PanelConfig(
@@ -586,7 +686,7 @@ class KiCadPanelizer(pcbnew.ActionPlugin):
     def defaults(self) -> None:
         settings = load_settings()
         translator = Translator(str(settings.get("language", "auto")))
-        self.name = translator("plugin_name")
+        self.name = f"{translator('plugin_name')} v{PLUGIN_VERSION}"
         self.category = "PCB"
         self.description = translator("plugin_description")
         self.show_toolbar_button = True

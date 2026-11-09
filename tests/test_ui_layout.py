@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT))
 # requires a live pcbnew program, so disable it for this isolated wx UI test.
 pcbnew.ActionPlugin.register = lambda self: None
 
-from plugins.geometry import BBox, PanelConfig  # noqa: E402
+from plugins.geometry import BBox, PanelConfig, make_layout  # noqa: E402
 from plugins.i18n import Translator  # noqa: E402
 from plugins.kicad_panelizer import PanelizerDialog  # noqa: E402
 
@@ -46,21 +46,35 @@ class UiLayoutTests(unittest.TestCase):
             self.assertLessEqual(size.width, client.width)
             self.assertLessEqual(size.height, client.height)
             self.assertEqual(dialog._ok_button.GetLabel(), "应用并保存")
-            self.assertGreaterEqual(dialog._scroll.GetClientSize().height, 300)
-            self.assertFalse(dialog._scroll.HasScrollbar(wx.VERTICAL))
-            self.assertFalse(dialog._scroll.HasScrollbar(wx.HORIZONTAL))
+            self.assertGreaterEqual(dialog._body_panel.GetClientSize().height, 400)
+            self.assertLessEqual(dialog._ctl_columns.GetSize().width, 150)
+            self.assertGreaterEqual(dialog.preview.GetSize().width, 450)
+            self.assertTrue(dialog.GetTitle().endswith("v1.0.4"))
+            self.assertEqual(
+                dialog._ctl_columns.GetSize().width,
+                dialog._mode_choice.GetSize().width,
+            )
+            self.assertLessEqual(
+                abs(
+                    dialog._settings_panel.GetSize().width
+                    - dialog.preview.GetParent().GetSize().width
+                ),
+                80,
+            )
+            self.assertTrue(dialog._ctl_bottom.IsShown())
         finally:
             dialog.Destroy()
 
-    def test_settings_area_scrolls_at_minimum_window_size(self) -> None:
+    def test_minimum_window_keeps_all_rail_controls_visible(self) -> None:
         dialog = self.make_dialog()
         try:
-            dialog.SetSize((800, 560))
+            dialog.SetSize(dialog.GetMinSize())
             dialog.Layout()
-            self.assertGreater(
-                dialog._scroll.GetVirtualSize().height,
-                dialog._scroll.GetClientSize().height,
-            )
+            self.assertTrue(dialog._ctl_left.IsShown())
+            self.assertTrue(dialog._ctl_right.IsShown())
+            self.assertTrue(dialog._ctl_top.IsShown())
+            self.assertTrue(dialog._ctl_bottom.IsShown())
+            self.assertTrue(dialog._ok_button.IsShown())
         finally:
             dialog.Destroy()
 
@@ -86,6 +100,41 @@ class UiLayoutTests(unittest.TestCase):
             self.assertFalse(dialog._ctl_enable_marks.IsEnabled())
             self.assertTrue(dialog.preview.single_mode)
             self.assertIn("不会被备份文件覆盖", dialog._labels["backup_note"].GetLabel())
+        finally:
+            dialog.Destroy()
+
+    def test_preview_bitmap_contains_all_board_cells(self) -> None:
+        dialog = self.make_dialog("zh")
+        try:
+            preview = dialog.preview
+            preview.set_data(
+                dialog.board_bbox,
+                make_layout(
+                    dialog.board_bbox,
+                    PanelConfig(columns=5, rows=4, y_gap_mm=2.0),
+                ),
+            )
+            width, height = 900, 600
+            bitmap = wx.Bitmap(width, height)
+            dc = wx.MemoryDC(bitmap)
+            preview._render(dc, width, height)
+            dc.SelectObject(wx.NullBitmap)
+            image = bitmap.ConvertToImage()
+
+            board_pixels = 0
+            for y in range(0, height, 3):
+                for x in range(0, width, 3):
+                    rgb = (
+                        image.GetRed(x, y),
+                        image.GetGreen(x, y),
+                        image.GetBlue(x, y),
+                    )
+                    if rgb in {
+                        (216, 236, 252),
+                        (198, 224, 246),
+                    }:
+                        board_pixels += 1
+            self.assertGreater(board_pixels, 10000)
         finally:
             dialog.Destroy()
 

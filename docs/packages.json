@@ -39,9 +39,9 @@
                     "kicad_version_max": "11.99",
                     "runtime": "swig",
                     "download_url": "https://github.com/YonimoC/kicad-panelizer/releases/download/v1.0.4/kicad-panelizer.zip",
-                    "download_sha256": "4f313e1e8a3e432d71471a10940ec56b8e3767882aecfbb3c793227ad2f4d8b4",
-                    "download_size": 22271,
-                    "install_size": 72226
+                    "download_sha256": "35f982d39dee4a8d84049cc1646aa3347d2ed775cfee1bab04df80b158ac59c7",
+                    "download_size": 23024,
+                    "install_size": 76197
                 }
             ]
         }
