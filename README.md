@@ -1,8 +1,8 @@
 # KiCad Panelizer
 
-KiCad PCB 参数化拼板插件。仅复制板级 `Edge.Cuts` 外边框，添加工艺边和顶/底面 Mark 点；确认后直接写入当前 PCB，并在同目录保留带时间戳的原文件备份。
+KiCad PCB 参数化拼板插件。仅复制板级 `Edge.Cuts` 外边框，添加工艺边和顶/底面 Mark 点；确认后直接写入当前 PCB，并在同目录保留一个固定的 `.kicad_pcb.bak` 原板备份。
 
-当前版本：**1.0.2**  
+当前版本：**1.0.3**  
 目标环境：**KiCad 8.0 ~ 11（SWIG Action Plugin）**  
 本机实测环境：**KiCad Huaqiu 10.0.6**
 
@@ -15,9 +15,10 @@ KiCad PCB 参数化拼板插件。仅复制板级 `Edge.Cuts` 外边框，添加
 - Mark 点默认 1 mm 铜、3 mm 阻焊开窗、居中放置于工艺边。
 - 顶层 Mark 默认距进板边 10 mm；底层 Mark 默认距末端 15 mm。
 - 对话框实时预览拼板尺寸、工艺边和 Mark 位置。
+- “拼板方式”支持 **V 割拼板 / 单板模式**；单板模式原地删除插件新增的板框、工艺边和 Mark，不覆盖原板内容。
+- 手动清理过阵列、但残留拼板标记的旧 PCB 可以重新拼板，不再误报“已经拼板”。
 - 中文/English 界面，可跟随系统或手动切换。
-- 写入前保存当前 PCB 并生成 `*.backup-YYYYMMDD-HHMMSS.kicad_pcb`。
-- 防止对同一 PCB 重复拼板；重新拼板前请从备份恢复。
+- 写入前保存当前 PCB，并更新唯一的 `<原板>.kicad_pcb.bak` 备份，不再批量生成备份文件。
 
 ## 安装
 
@@ -62,7 +63,9 @@ KiCad PCB 参数化拼板插件。仅复制板级 `Edge.Cuts` 外边框，添加
 4. 检查右侧预览。
 5. 点击 **应用并保存**。
 
-插件会先保存当前 PCB，再创建备份，随后修改当前文件并保存拼板。
+恢复单板时，将“拼板方式”切换为 **单板模式**，按钮会变成 **恢复单板并保存**。该模式只删除当前 PCB 中由插件添加的阵列板框、工艺边、Mark 和内部标记，不复制备份覆盖当前文件。
+
+插件拼板前会先保存当前 PCB，再更新唯一的 `<原板>.kicad_pcb.bak` 备份，随后修改当前文件并保存拼板。
 
 ## 拼板规则
 
@@ -118,9 +121,15 @@ KiCad API 集成测试：
 & 'D:\KiCad\10.0\bin\python.exe' -m unittest discover -s tests -p 'test_integration.py' -v
 ```
 
+wxPython 窗口布局与模式切换测试：
+
+```powershell
+& 'D:\KiCad\10.0\bin\python.exe' -m unittest discover -s tests -p 'test_ui_layout.py' -v
+```
+
 ## English summary
 
-KiCad Panelizer is a parameterized PCB panelization Action Plugin. It copies only board-level `Edge.Cuts` outlines, adds process rails and 1 mm copper / 3 mm mask fiducials on both sides, saves a timestamped backup, then replaces and saves the current PCB. The UI supports Chinese and English.
+KiCad Panelizer is a parameterized PCB panelization Action Plugin. It copies only board-level `Edge.Cuts` outlines, adds process rails and 1 mm copper / 3 mm mask fiducials on both sides, and keeps one fixed `.kicad_pcb.bak` backup. Single-board mode removes panel-added outlines, rails, fiducials, and marker objects without replacing the board from a backup. The UI supports Chinese and English.
 
 ## License
 
@@ -128,6 +137,7 @@ MIT
 
 ## 版本历史
 
+- **1.0.3** — 新增单板恢复模式；修复旧标记导致无法重新拼板；备份改为唯一的 `.kicad_pcb.bak`。
 - **1.0.2** — 对话框按屏幕尺寸自动调整，设置区支持滚动，修复窗口较小时内容被裁切。
 - **1.0.1** — 修复 Mark 焊盘保存后回到原点的问题；隐藏重复拼板标记；DRC 清零。
 - **1.0.0** — 首个版本：V 割外框阵列、工艺边、顶/底面 Mark、备份、中英文界面。

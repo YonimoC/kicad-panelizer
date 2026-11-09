@@ -14,5 +14,6 @@ __pycache__/
 
 # Local test boards and backups
 tests/output/
+*.kicad_pcb.bak
 *.kicad_pcb.backup-*
 

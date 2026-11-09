@@ -32,6 +32,9 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "rows": "Rows",
         "x_gap": "Column gap (mm)",
         "y_gap": "Row gap (mm)",
+        "panel_mode": "Panel mode",
+        "vcut_mode": "V-cut panel",
+        "single_board_mode": "Single-board mode",
         "cut_type": "Separation",
         "cut_type_value": "V-cut (Edge.Cuts)",
         "rail_group": "Process rails",
@@ -54,15 +57,23 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "preview": "Preview",
         "board_size": "Single board: {width:.2f} x {height:.2f} mm",
         "panel_size": "Panel: {width:.2f} x {height:.2f} mm",
+        "single_board_preview": "Single-board restoration preview",
         "counts": "{columns} x {rows}, {count} boards",
         "preview_error": "Preview unavailable",
         "top_mark_legend": "F.Cu Mark",
         "bottom_mark_legend": "B.Cu Mark",
         "backup_note": (
-            "Apply saves the current PCB, creates a timestamped backup next to "
-            "it, replaces the current file, and saves the panel."
+            "Apply saves the current PCB and keeps one fixed backup named "
+            "<board>.kicad_pcb.bak. The backup is refreshed each time a panel "
+            "is generated."
+        ),
+        "restore_note": (
+            "Single-board mode deletes only panel-added outlines, process rails, "
+            "fiducials, and the internal marker from the current PCB. Original "
+            "board content and the original Edge.Cuts are preserved."
         ),
         "apply_save": "Apply and save",
+        "restore_apply": "Restore single board and save",
         "cancel": "Cancel",
         "invalid_title": "Invalid parameters",
         "invalid_columns": "Columns must be between 1 and 100.",
@@ -81,14 +92,27 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "no_outline": "No board-level Edge.Cuts outline was found on the current PCB.",
         "already_panelized_title": "PCB already panelized",
         "already_panelized": (
-            "This PCB contains the panelizer marker. Restore its backup before "
-            "running the plugin again."
+            "This PCB is already panelized. Use Single-board mode to remove the "
+            "panel-added outlines, rails, and fiducials."
+        ),
+        "not_panelized_title": "PCB is not panelized",
+        "not_panelized": "No panelizer marker was found on the current PCB.",
+        "no_restore_metadata": (
+            "This panel does not contain the original outline metadata needed "
+            "for safe in-place restoration. Re-panel with the current version "
+            "before using Single-board mode."
         ),
         "save_failed": "KiCad could not save the PCB file.",
         "applied_title": "Panel created",
         "applied_body": (
             "The PCB was panelized and saved.\n\nBackup:\n{backup}\n\n"
             "Added {edges} outline elements and {marks} fiducials."
+        ),
+        "restored_title": "Single board restored",
+        "restored_body": (
+            "Panel additions were removed from the current PCB and the file was "
+            "saved.\n\nRemoved {edges} extra outline elements and {marks} "
+            "generated fiducials. The original board content was not replaced."
         ),
         "error_title": "Panelizer error",
         "generic_error": "The panelizer could not complete the operation:\n{error}",
@@ -104,6 +128,9 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "rows": "行数",
         "x_gap": "列距 (mm)",
         "y_gap": "行距 (mm)",
+        "panel_mode": "拼板方式",
+        "vcut_mode": "V 割拼板",
+        "single_board_mode": "单板模式",
         "cut_type": "分离方式",
         "cut_type_value": "V 割 (Edge.Cuts)",
         "rail_group": "工艺边",
@@ -126,12 +153,18 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "preview": "预览",
         "board_size": "单板尺寸：{width:.2f} × {height:.2f} mm",
         "panel_size": "拼板尺寸：{width:.2f} × {height:.2f} mm",
+        "single_board_preview": "单板恢复预览",
         "counts": "{columns} × {rows}，共 {count} 片",
         "preview_error": "无法预览",
         "top_mark_legend": "顶层 Mark",
         "bottom_mark_legend": "底层 Mark",
-        "backup_note": "确认后先保存当前 PCB，并在同目录生成带时间戳的备份，再写入拼板并保存。",
+        "backup_note": "确认后先保存当前 PCB，并保留一个固定的原板备份：<板文件>.kicad_pcb.bak；再次拼板时更新该备份。",
+        "restore_note": (
+            "单板模式只删除当前 PCB 中由插件新增的阵列板框、工艺边、Mark 点和内部标记；"
+            "原单板内容和原始 Edge.Cuts 不会被备份文件覆盖。"
+        ),
         "apply_save": "应用并保存",
+        "restore_apply": "恢复单板并保存",
         "cancel": "取消",
         "invalid_title": "参数无效",
         "invalid_columns": "列数必须在 1 到 100 之间。",
@@ -147,10 +180,22 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "no_outline_title": "缺少板框",
         "no_outline": "当前 PCB 中没有找到位于 Edge.Cuts 的板级外边框。",
         "already_panelized_title": "PCB 已经拼板",
-        "already_panelized": "当前 PCB 包含拼板标记。请先从备份恢复原始 PCB，再重新执行。",
+        "already_panelized": "当前 PCB 已经拼板。请选择“单板模式”，删除插件新增的板框、工艺边和 Mark 点。",
+        "not_panelized_title": "PCB 尚未拼板",
+        "not_panelized": "当前 PCB 中没有找到拼板标记，无法执行单板恢复。",
+        "no_restore_metadata": (
+            "当前拼板缺少原始板框定位信息，无法安全地原地恢复。"
+            "请使用当前版本重新拼板后再测试单板模式。"
+        ),
         "save_failed": "KiCad 无法保存当前 PCB 文件。",
         "applied_title": "拼板已生成",
         "applied_body": "PCB 已完成拼板并保存。\n\n备份：\n{backup}\n\n新增 {edges} 个外框元素、{marks} 个 Mark 点。",
+        "restored_title": "单板已恢复",
+        "restored_body": (
+            "已从当前 PCB 中删除插件新增内容并保存文件。\n\n"
+            "删除多余外框 {edges} 个、生成的 Mark 点 {marks} 个。"
+            "原单板内容没有被备份文件覆盖。"
+        ),
         "error_title": "拼板失败",
         "generic_error": "插件无法完成操作：\n{error}",
     },

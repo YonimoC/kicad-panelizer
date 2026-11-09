@@ -12,7 +12,13 @@ import wx
 
 from .geometry import BBox, ConfigError, PanelConfig, PanelLayout, make_layout, mark_positions
 from .i18n import LANGUAGE_LABELS, Translator
-from .panelizer import PanelizerError, board_outline_bbox, panelize_and_save
+from .panelizer import (
+    PanelizerError,
+    board_outline_bbox,
+    original_single_board_bbox,
+    panelize_and_save,
+    restore_single_board_and_save,
+)
 
 
 APP_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
@@ -48,6 +54,7 @@ class PanelPreview(wx.Panel):
         self.tr = translator
         self.board: BBox | None = None
         self.layout: PanelLayout | None = None
+        self.single_mode = False
         self.error = ""
         self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
         self.SetMinSize((460, 410))
@@ -61,7 +68,15 @@ class PanelPreview(wx.Panel):
     ) -> None:
         self.board = board
         self.layout = layout
+        self.single_mode = False
         self.error = error
+        self.Refresh()
+
+    def set_single_board(self, board: BBox) -> None:
+        self.board = board
+        self.layout = None
+        self.single_mode = True
+        self.error = ""
         self.Refresh()
 
     def _on_paint(self, _event) -> None:
@@ -72,7 +87,7 @@ class PanelPreview(wx.Panel):
         if width < 40 or height < 40:
             return
 
-        if self.error or self.layout is None or self.board is None:
+        if self.error or self.board is None or (self.layout is None and not self.single_mode):
             dc.SetTextForeground(wx.Colour(190, 57, 57))
             dc.SetFont(self.GetFont().Bold())
             message = f"{self.tr('preview_error')}: {self.error or self.tr('invalid_columns')}"
@@ -80,7 +95,37 @@ class PanelPreview(wx.Panel):
             dc.DrawText(message, max(12, (width - text_width) // 2), max(12, height // 2))
             return
 
+        if self.single_mode:
+            panel = self.board
+            available_w = width - 76
+            available_h = height - 110
+            scale = min(
+                available_w / max(panel.width, 0.01),
+                available_h / max(panel.height, 0.01),
+            )
+            origin_x = (width - panel.width * scale) / 2
+            origin_y = 42 + (available_h - panel.height * scale) / 2
+            dc.SetPen(wx.Pen(wx.Colour(54, 69, 91), 2))
+            dc.SetBrush(wx.Brush(wx.Colour(218, 237, 252)))
+            dc.DrawRectangle(
+                int(origin_x),
+                int(origin_y),
+                max(1, int(panel.width * scale)),
+                max(1, int(panel.height * scale)),
+            )
+            dc.SetFont(self.GetFont())
+            dc.SetTextForeground(wx.Colour(50, 57, 68))
+            dc.DrawText(
+                self.tr("board_size", width=panel.width, height=panel.height),
+                18,
+                12,
+            )
+            dc.DrawText(self.tr("single_board_preview"), 18, height - 52)
+            return
+
         layout = self.layout
+        if layout is None:
+            return
         config = layout.config
         panel = layout.panel
         available_w = width - 76
@@ -171,8 +216,10 @@ class PanelizerDialog(wx.Dialog):
         self._labels: dict[str, wx.StaticText] = {}
         self._group_boxes: dict[str, wx.StaticBoxSizer] = {}
         self._setting_language = False
+        self._mode = "vcut"
         self._build(config)
         self._refresh_texts()
+        self._set_config_enabled()
         self._update_preview()
         self._fit_to_display()
 
@@ -263,10 +310,15 @@ class PanelizerDialog(wx.Dialog):
         self._spin(
             array_box.GetStaticBox(), "y_gap", config.y_gap_mm, 0, 100, 0.1, 2
         )
-        self._labels["cut_type"] = wx.StaticText(array_box.GetStaticBox())
-        self._labels["cut_type_value"] = wx.StaticText(array_box.GetStaticBox())
-        array_grid.Add(self._labels["cut_type"], 0, wx.ALIGN_CENTER_VERTICAL)
-        array_grid.Add(self._labels["cut_type_value"], 1, wx.ALIGN_CENTER_VERTICAL)
+        self._labels["panel_mode"] = wx.StaticText(array_box.GetStaticBox())
+        self._mode_choice = wx.Choice(
+            array_box.GetStaticBox(),
+            choices=[self.tr("vcut_mode"), self.tr("single_board_mode")],
+        )
+        self._mode_choice.SetSelection(0)
+        self._mode_choice.Bind(wx.EVT_CHOICE, self._on_mode_change)
+        array_grid.Add(self._labels["panel_mode"], 0, wx.ALIGN_CENTER_VERTICAL)
+        array_grid.Add(self._mode_choice, 1, wx.EXPAND)
         array_box.Add(array_grid, 0, wx.EXPAND | wx.ALL, 10)
         settings.Add(array_box, 0, wx.EXPAND | wx.BOTTOM, 12)
 
@@ -380,16 +432,63 @@ class PanelizerDialog(wx.Dialog):
         self._update_preview()
         save_settings({"language": self.tr.language})
 
+    def _on_mode_change(self, _event) -> None:
+        self._mode = "single" if self._mode_choice.GetSelection() == 1 else "vcut"
+        self._refresh_texts()
+        self._set_config_enabled()
+        self._update_preview()
+
+    def get_mode(self) -> str:
+        return self._mode
+
+    def _set_config_enabled(self) -> None:
+        single = self.get_mode() == "single"
+        for name in (
+            "columns",
+            "rows",
+            "x_gap",
+            "y_gap",
+            "rail_width",
+            "left",
+            "right",
+            "top",
+            "bottom",
+            "enable_marks",
+            "copper_diameter",
+            "mask_diameter",
+            "top_feed_offset",
+            "bottom_feed_offset",
+        ):
+            control = getattr(self, f"_ctl_{name}")
+            if single:
+                control.Enable(False)
+            elif name in (
+                "copper_diameter",
+                "mask_diameter",
+                "top_feed_offset",
+                "bottom_feed_offset",
+            ):
+                control.Enable(self._ctl_enable_marks.GetValue())
+            else:
+                control.Enable(True)
+
     def _refresh_texts(self) -> None:
         self.SetTitle(self.tr("dialog_title"))
         for key, control in self._labels.items():
             control.SetLabel(self.tr(key))
+        self._mode_choice.SetItems(
+            [self.tr("vcut_mode"), self.tr("single_board_mode")]
+        )
+        self._mode_choice.SetSelection(1 if self._mode == "single" else 0)
         for key, sizer in self._group_boxes.items():
             sizer.GetStaticBox().SetLabel(self.tr(key))
         if self._ok_button:
-            self._ok_button.SetLabel(self.tr("apply_save"))
+            label_key = "restore_apply" if self.get_mode() == "single" else "apply_save"
+            self._ok_button.SetLabel(self.tr(label_key))
         if self._cancel_button:
             self._cancel_button.SetLabel(self.tr("cancel"))
+        note_key = "restore_note" if self.get_mode() == "single" else "backup_note"
+        self._labels["backup_note"].SetLabel(self.tr(note_key))
         self._labels["mark_note"].Wrap(430)
         self._labels["backup_note"].Wrap(455)
         self.Layout()
@@ -418,6 +517,10 @@ class PanelizerDialog(wx.Dialog):
         return self._read_config()
 
     def _on_change(self, _event) -> None:
+        if self.get_mode() == "single":
+            self._set_config_enabled()
+            self._update_preview()
+            return
         enabled = self._ctl_enable_marks.GetValue()
         for name in (
             "copper_diameter",
@@ -429,6 +532,9 @@ class PanelizerDialog(wx.Dialog):
         self._update_preview()
 
     def _update_preview(self) -> None:
+        if self.get_mode() == "single":
+            self.preview.set_single_board(self.board_bbox)
+            return
         try:
             config = self._read_config()
             config.validate()
@@ -439,6 +545,10 @@ class PanelizerDialog(wx.Dialog):
             self.preview.set_data(self.board_bbox, None, self.tr(code))
 
     def _on_ok(self, event) -> None:
+        if self.get_mode() == "single":
+            save_settings({"language": self.tr.language})
+            event.Skip()
+            return
         try:
             config = self._read_config()
             config.validate()
@@ -482,7 +592,7 @@ class KiCadPanelizer(pcbnew.ActionPlugin):
             return
 
         try:
-            bbox = board_outline_bbox(board)
+            bbox = original_single_board_bbox(board)
         except PanelizerError as exc:
             key = "no_outline" if exc.code == "no_outline" else "generic_error"
             title_key = "no_outline_title"
@@ -500,10 +610,25 @@ class KiCadPanelizer(pcbnew.ActionPlugin):
             if dialog.ShowModal() != wx.ID_OK:
                 return
             config = dialog.get_config()
+            mode = dialog.get_mode()
         finally:
             dialog.Destroy()
 
         try:
+            if mode == "single":
+                restored = restore_single_board_and_save(board)
+                pcbnew.Refresh()
+                wx.MessageBox(
+                    translator(
+                        "restored_body",
+                        edges=restored.removed_edges,
+                        marks=restored.removed_fiducials,
+                    ),
+                    translator("restored_title"),
+                    wx.OK | wx.ICON_INFORMATION,
+                )
+                return
+
             result = panelize_and_save(board, config)
             pcbnew.Refresh()
             wx.MessageBox(
@@ -520,6 +645,12 @@ class KiCadPanelizer(pcbnew.ActionPlugin):
             if exc.code == "already_panelized":
                 message = translator("already_panelized")
                 title = translator("already_panelized_title")
+            elif exc.code == "not_panelized":
+                message = translator("not_panelized")
+                title = translator("not_panelized_title")
+            elif exc.code == "no_restore_metadata":
+                message = translator("no_restore_metadata")
+                title = translator("error_title")
             elif exc.code == "no_board_file":
                 message = translator("no_board_file")
                 title = translator("error_title")

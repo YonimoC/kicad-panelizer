@@ -73,6 +73,20 @@ class UiLayoutTests(unittest.TestCase):
         finally:
             dialog.Destroy()
 
+    def test_single_board_mode_changes_action_and_disables_panel_controls(self) -> None:
+        dialog = self.make_dialog("zh")
+        try:
+            dialog._mode_choice.SetSelection(1)
+            dialog._on_mode_change(None)
+            self.assertEqual(dialog.get_mode(), "single")
+            self.assertEqual(dialog._ok_button.GetLabel(), "恢复单板并保存")
+            self.assertFalse(dialog._ctl_rows.IsEnabled())
+            self.assertFalse(dialog._ctl_enable_marks.IsEnabled())
+            self.assertTrue(dialog.preview.single_mode)
+            self.assertIn("不会被备份文件覆盖", dialog._labels["backup_note"].GetLabel())
+        finally:
+            dialog.Destroy()
+
 
 if __name__ == "__main__":
     unittest.main()
