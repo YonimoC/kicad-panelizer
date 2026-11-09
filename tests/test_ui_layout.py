@@ -47,6 +47,8 @@ class UiLayoutTests(unittest.TestCase):
             self.assertLessEqual(size.height, client.height)
             self.assertEqual(dialog._ok_button.GetLabel(), "应用并保存")
             self.assertGreaterEqual(dialog._scroll.GetClientSize().height, 300)
+            self.assertFalse(dialog._scroll.HasScrollbar(wx.VERTICAL))
+            self.assertFalse(dialog._scroll.HasScrollbar(wx.HORIZONTAL))
         finally:
             dialog.Destroy()
 

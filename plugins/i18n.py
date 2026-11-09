@@ -112,7 +112,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "restored_body": (
             "Panel additions were removed from the current PCB and the file was "
             "saved.\n\nRemoved {edges} extra outline elements and {marks} "
-            "generated fiducials. The original board content was not replaced."
+            "generated fiducials, plus {annotations} dimension annotations. "
+            "The original board content was not replaced."
         ),
         "error_title": "Panelizer error",
         "generic_error": "The panelizer could not complete the operation:\n{error}",
@@ -194,7 +195,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "restored_body": (
             "已从当前 PCB 中删除插件新增内容并保存文件。\n\n"
             "删除多余外框 {edges} 个、生成的 Mark 点 {marks} 个。"
-            "原单板内容没有被备份文件覆盖。"
+            "删除尺寸标注 {annotations} 个。原单板内容没有被备份文件覆盖。"
         ),
         "error_title": "拼板失败",
         "generic_error": "插件无法完成操作：\n{error}",

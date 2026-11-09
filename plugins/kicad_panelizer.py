@@ -145,15 +145,16 @@ class PanelPreview(wx.Panel):
                 1, py(box.bottom) - py(box.top)
             )
 
-        dock = wx.Colour(219, 225, 234)
-        board_fill = wx.Colour(218, 237, 252)
-        edge = wx.Colour(54, 69, 91)
-        dc.SetPen(wx.Pen(wx.Colour(198, 205, 216), 1))
+        dock = wx.Colour(214, 220, 229)
+        board_fill = wx.Colour(216, 236, 252)
+        board_fill_alt = wx.Colour(198, 224, 246)
+        edge = wx.Colour(38, 62, 88)
+        cell_edge = wx.Colour(61, 126, 181)
+        dc.SetPen(wx.Pen(wx.Colour(188, 198, 212), 1))
         dc.SetBrush(wx.Brush(dock))
         dc.DrawRectangle(*rect(panel))
 
-        dc.SetPen(wx.Pen(wx.Colour(71, 119, 166), 1))
-        dc.SetBrush(wx.Brush(board_fill))
+        dc.SetFont(self.GetFont())
         for row in range(config.rows):
             for column in range(config.columns):
                 dx, dy = layout.cell_origin(column, row)
@@ -163,10 +164,25 @@ class PanelPreview(wx.Panel):
                     dx + layout.board.width,
                     dy + layout.board.height,
                 )
-                dc.SetPen(wx.Pen(wx.Colour(135, 172, 204), 1))
-                dc.DrawRectangle(*rect(cell))
+                cell_rect = rect(cell)
+                dc.SetPen(wx.Pen(cell_edge, 2))
+                dc.SetBrush(
+                    wx.Brush(
+                        board_fill if (row + column) % 2 == 0 else board_fill_alt
+                    )
+                )
+                dc.DrawRectangle(*cell_rect)
+                if cell_rect[2] >= 28 and cell_rect[3] >= 20:
+                    label = str(row * config.columns + column + 1)
+                    text_width, text_height = dc.GetTextExtent(label)
+                    dc.SetTextForeground(wx.Colour(70, 104, 136))
+                    dc.DrawText(
+                        label,
+                        cell_rect[0] + (cell_rect[2] - text_width) // 2,
+                        cell_rect[1] + (cell_rect[3] - text_height) // 2,
+                    )
 
-        dc.SetPen(wx.Pen(edge, 2))
+        dc.SetPen(wx.Pen(edge, 3))
         dc.SetBrush(wx.TRANSPARENT_BRUSH)
         dc.DrawRectangle(*rect(panel))
 
@@ -174,7 +190,7 @@ class PanelPreview(wx.Panel):
             center = wx.Point(px(spec.x), py(spec.y))
             mask_radius = max(2, int(config.mark_mask_mm * scale / 2))
             copper_radius = max(1, int(config.mark_copper_mm * scale / 2))
-            dc.SetPen(wx.Pen(wx.Colour(180, 145, 55), 1))
+            dc.SetPen(wx.Pen(wx.Colour(180, 145, 55), 2))
             dc.SetBrush(wx.Brush(wx.Colour(244, 214, 121)))
             dc.DrawCircle(center, mask_radius)
             dc.SetPen(wx.Pen(wx.Colour(120, 80, 30), 1))
@@ -290,7 +306,7 @@ class PanelizerDialog(wx.Dialog):
 
         self._scroll = wx.ScrolledWindow(
             self,
-            style=wx.VSCROLL | wx.HSCROLL | wx.BORDER_NONE,
+            style=wx.BORDER_NONE,
         )
         self._scroll.SetScrollRate(12, 12)
         self._scroll.SetBackgroundColour(self.GetBackgroundColour())
@@ -623,6 +639,7 @@ class KiCadPanelizer(pcbnew.ActionPlugin):
                         "restored_body",
                         edges=restored.removed_edges,
                         marks=restored.removed_fiducials,
+                        annotations=restored.removed_annotations,
                     ),
                     translator("restored_title"),
                     wx.OK | wx.ICON_INFORMATION,

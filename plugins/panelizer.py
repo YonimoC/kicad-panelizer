@@ -31,6 +31,7 @@ class ApplyResult:
     layout: PanelLayout
     added_edges: int
     added_marks: int
+    added_dimensions: int
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,7 @@ class RestoreResult:
     removed_edges: int
     removed_fiducials: int
     removed_markers: int
+    removed_annotations: int
 
 
 def _mm(value: float) -> int:
@@ -61,20 +63,35 @@ def edge_drawings(board) -> list[object]:
     ]
 
 
-def board_outline_bbox(board) -> BBox:
-    drawings = edge_drawings(board)
+def _outline_bbox(drawings: list[object]) -> BBox:
     if not drawings:
         raise PanelizerError("no_outline")
 
-    boxes = [item.GetBoundingBox() for item in drawings]
-    left = min(box.GetLeft() for box in boxes)
-    top = min(box.GetTop() for box in boxes)
-    right = max(box.GetRight() for box in boxes)
-    bottom = max(box.GetBottom() for box in boxes)
+    left = None
+    top = None
+    right = None
+    bottom = None
+    for item in drawings:
+        box = item.GetBoundingBox()
+        inset = int(item.GetWidth()) // 2
+        item_left = box.GetLeft() + inset
+        item_top = box.GetTop() + inset
+        item_right = box.GetRight() - inset
+        item_bottom = box.GetBottom() - inset
+        left = item_left if left is None else min(left, item_left)
+        top = item_top if top is None else min(top, item_top)
+        right = item_right if right is None else max(right, item_right)
+        bottom = item_bottom if bottom is None else max(bottom, item_bottom)
+
+    assert left is not None and top is not None and right is not None and bottom is not None
     bbox = BBox(_to_mm(left), _to_mm(top), _to_mm(right), _to_mm(bottom))
     if bbox.width <= 0 or bbox.height <= 0:
         raise PanelizerError("no_outline")
     return bbox
+
+
+def board_outline_bbox(board) -> BBox:
+    return _outline_bbox(edge_drawings(board))
 
 
 def has_panel_marker(board) -> bool:
@@ -129,16 +146,88 @@ def _add_outer_outline(
     layout: PanelLayout,
     seen_segments: set[tuple[tuple[int, int], tuple[int, int]]],
 ) -> int:
-    left, top = layout.panel.left, layout.panel.top
-    right, bottom = layout.panel.right, layout.panel.bottom
-    return sum(
-        (
-            _add_segment(board, left, top, right, top, seen_segments),
-            _add_segment(board, right, top, right, bottom, seen_segments),
-            _add_segment(board, right, bottom, left, bottom, seen_segments),
-            _add_segment(board, left, bottom, left, top, seen_segments),
-        )
-    )
+    panel = layout.panel
+    existing = [
+        item
+        for item in board.GetDrawings()
+        if item.GetLayer() == pcbnew.Edge_Cuts
+        and item.GetShape() == pcbnew.S_SEGMENT
+    ]
+    added = 0
+
+    def add_side(vertical: bool, fixed: float, low: float, high: float) -> None:
+        nonlocal added
+        fixed_i = _mm(fixed)
+        low_i, high_i = _mm(low), _mm(high)
+        intervals: list[tuple[int, int]] = []
+        for item in existing:
+            start, end = item.GetStart(), item.GetEnd()
+            if vertical and start.x == end.x == fixed_i:
+                first, second = sorted((start.y, end.y))
+            elif not vertical and start.y == end.y == fixed_i:
+                first, second = sorted((start.x, end.x))
+            else:
+                continue
+            first = max(first, low_i)
+            second = min(second, high_i)
+            if first < second:
+                intervals.append((first, second))
+
+        intervals.sort()
+        merged: list[tuple[int, int]] = []
+        for first, second in intervals:
+            if merged and first <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], second))
+            else:
+                merged.append((first, second))
+
+        cursor = low_i
+        for first, second in merged:
+            if first > cursor:
+                if vertical:
+                    added += _add_segment(
+                        board,
+                        fixed,
+                        _to_mm(cursor),
+                        fixed,
+                        _to_mm(first),
+                        seen_segments,
+                    )
+                else:
+                    added += _add_segment(
+                        board,
+                        _to_mm(cursor),
+                        fixed,
+                        _to_mm(first),
+                        fixed,
+                        seen_segments,
+                    )
+            cursor = max(cursor, second)
+        if cursor < high_i:
+            if vertical:
+                added += _add_segment(
+                    board,
+                    fixed,
+                    _to_mm(cursor),
+                    fixed,
+                    high,
+                    seen_segments,
+                )
+            else:
+                added += _add_segment(
+                    board,
+                    _to_mm(cursor),
+                    fixed,
+                    high,
+                    fixed,
+                    seen_segments,
+                )
+
+    add_side(False, panel.top, panel.left, panel.right)
+    add_side(True, panel.right, panel.top, panel.bottom)
+    add_side(False, panel.bottom, panel.left, panel.right)
+    add_side(True, panel.left, panel.top, panel.bottom)
+    return added
 
 
 def _add_mark(board, config: PanelConfig, spec) -> None:
@@ -214,7 +303,59 @@ def _legacy_reference_outlines(board) -> Counter[tuple[object, ...]] | None:
     return Counter(_edge_bbox_key(item) for item in edge_drawings(backup_board))
 
 
-def _add_marker(board, board_bbox: BBox, edge_ids: list[str]) -> None:
+def _dimension_settings() -> tuple[int, int]:
+    units = pcbnew.GetUserUnits()
+    if units == pcbnew.EDA_UNITS_INCH:
+        return pcbnew.DIM_UNITS_MODE_INCH, 3
+    if units == pcbnew.EDA_UNITS_MILS:
+        return pcbnew.DIM_UNITS_MODE_MILS, 0
+    return pcbnew.DIM_UNITS_MODE_MM, 2
+
+
+def _add_panel_dimensions(board, layout: PanelLayout) -> list[str]:
+    mode, precision = _dimension_settings()
+    ids: list[str] = []
+
+    def add_dimension(start, end, height_mm: float) -> None:
+        dimension = pcbnew.PCB_DIM_ALIGNED(board)
+        dimension.SetStartEnd(start, end)
+        dimension.SetHeight(_mm(height_mm))
+        dimension.SetLayer(pcbnew.F_SilkS)
+        dimension.SetUnitsMode(mode)
+        dimension.SetUnitsFormat(pcbnew.DIM_UNITS_FORMAT_BARE_SUFFIX)
+        dimension.SetPrecision(precision)
+        dimension.SetTextSize(_point(1.3, 1.3))
+        dimension.SetTextThickness(_mm(0.15))
+        dimension.SetLineThickness(_mm(0.15))
+        dimension.SetArrowLength(_mm(1.2))
+        dimension.SetExtensionHeight(_mm(2.0))
+        dimension.SetExtensionOffset(_mm(0.4))
+        dimension.Update()
+        board.Add(dimension)
+        uuid = _uuid_text(dimension)
+        if uuid:
+            ids.append(uuid)
+
+    panel = layout.panel
+    add_dimension(
+        _point(panel.left, panel.bottom),
+        _point(panel.right, panel.bottom),
+        5.0,
+    )
+    add_dimension(
+        _point(panel.right, panel.top),
+        _point(panel.right, panel.bottom),
+        -5.0,
+    )
+    return ids
+
+
+def _add_marker(
+    board,
+    board_bbox: BBox,
+    edge_ids: list[str],
+    annotation_ids: list[str],
+) -> None:
     metadata = {
         "bbox": {
             "left": board_bbox.left,
@@ -223,6 +364,7 @@ def _add_marker(board, board_bbox: BBox, edge_ids: list[str]) -> None:
             "bottom": board_bbox.bottom,
         },
         "edge_ids": edge_ids,
+        "annotation_ids": annotation_ids,
     }
     marker = pcbnew.FOOTPRINT(board)
     marker.SetReference(PANEL_MARKER)
@@ -285,8 +427,9 @@ def apply_panelization(board, config: PanelConfig) -> tuple[PanelLayout, int, in
     for spec in mark_positions(layout):
         _add_mark(board, config, spec)
         mark_count += 1
-    _add_marker(board, layout.board, original_edge_ids)
-    return layout, added_edges, mark_count
+    annotation_ids = _add_panel_dimensions(board, layout)
+    _add_marker(board, layout.board, original_edge_ids, annotation_ids)
+    return layout, added_edges, mark_count, len(annotation_ids)
 
 
 def make_backup(path: Path) -> Path:
@@ -305,10 +448,10 @@ def panelize_and_save(board, config: PanelConfig) -> ApplyResult:
         raise PanelizerError("save_failed")
     backup = make_backup(path)
 
-    layout, added_edges, mark_count = apply_panelization(board, config)
+    layout, added_edges, mark_count, dimension_count = apply_panelization(board, config)
     if not pcbnew.SaveBoard(str(path), board):
         raise PanelizerError("save_failed", detail=f"Backup: {backup}")
-    return ApplyResult(backup, layout, added_edges, mark_count)
+    return ApplyResult(backup, layout, added_edges, mark_count, dimension_count)
 
 
 def _bbox_from_metadata(data: dict[str, object]) -> BBox | None:
@@ -397,6 +540,17 @@ def has_only_single_board_outline(board) -> bool:
 
 def original_single_board_bbox(board) -> BBox:
     metadata = _panel_metadata(board)
+    edge_ids_raw = metadata.get("edge_ids") if metadata else None
+    if isinstance(edge_ids_raw, list):
+        original_ids = {value for value in edge_ids_raw if isinstance(value, str)}
+        original_edges = [
+            item
+            for item in edge_drawings(board)
+            if _uuid_text(item) in original_ids
+        ]
+        if original_edges:
+            return _outline_bbox(original_edges)
+
     bbox = _bbox_from_metadata(metadata) if metadata else None
     if bbox is not None:
         return bbox
@@ -422,6 +576,18 @@ def restore_single_board(board) -> RestoreResult:
         raise PanelizerError("not_panelized")
 
     metadata = _panel_metadata(board)
+    annotation_ids_raw = metadata.get("annotation_ids") if metadata else None
+    annotation_ids = (
+        {value for value in annotation_ids_raw if isinstance(value, str)}
+        if isinstance(annotation_ids_raw, list)
+        else set()
+    )
+    removed_annotations = 0
+    for item in list(board.GetDrawings()):
+        if _uuid_text(item) in annotation_ids:
+            board.RemoveNative(item)
+            removed_annotations += 1
+
     original_bbox = _bbox_from_metadata(metadata) if metadata else None
     edge_ids_raw = metadata.get("edge_ids") if metadata else None
     original_edge_ids = (
@@ -480,6 +646,7 @@ def restore_single_board(board) -> RestoreResult:
         removed_edges=removed_edges,
         removed_fiducials=removed_fiducials,
         removed_markers=removed_markers,
+        removed_annotations=removed_annotations,
     )
 
 

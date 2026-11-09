@@ -55,11 +55,16 @@ class PanelizerIntegrationTests(unittest.TestCase):
     def test_apply_panelization_adds_outline_copies_rails_and_fiducials(self) -> None:
         board = make_rectangular_board()
         config = PanelConfig(columns=3, rows=2, y_gap_mm=2.0)
-        layout, added_edges, added_marks = apply_panelization(board, config)
+        self.assertAlmostEqual(board_outline_bbox(board).width, 20.0)
+        self.assertAlmostEqual(board_outline_bbox(board).height, 10.0)
+        layout, added_edges, added_marks, added_dimensions = apply_panelization(
+            board, config
+        )
 
         self.assertEqual(layout.board_count, 6)
         self.assertGreater(added_edges, 0)
         self.assertEqual(added_marks, 4)
+        self.assertEqual(added_dimensions, 2)
         self.assertTrue(has_panel_marker(board))
         self.assertEqual(len(list(board.GetFootprints())), 5)
 
@@ -69,6 +74,16 @@ class PanelizerIntegrationTests(unittest.TestCase):
             if isinstance(item, pcbnew.PCB_TEXT)
         ]
         self.assertEqual(source_texts.count("SOURCE_BOARD_CONTENT"), 1)
+        dimensions = [
+            item
+            for item in board.GetDrawings()
+            if item.Type() == pcbnew.PCB_DIM_ALIGNED_T
+        ]
+        self.assertEqual(len(dimensions), 2)
+        self.assertTrue(all(item.GetLayer() == pcbnew.F_SilkS for item in dimensions))
+        dimension_texts = {item.GetShownText(True) for item in dimensions}
+        self.assertIn("72.00 mm", dimension_texts)
+        self.assertIn("22.00 mm", dimension_texts)
 
         footprints = list(board.GetFootprints())
         mark_footprints = [
@@ -98,12 +113,13 @@ class PanelizerIntegrationTests(unittest.TestCase):
         self.assertGreater(restored.removed_edges, 0)
         self.assertEqual(restored.removed_fiducials, 4)
         self.assertEqual(restored.removed_markers, 1)
+        self.assertEqual(restored.removed_annotations, 2)
         self.assertEqual(len(edge_drawings(board)), 4)
         self.assertEqual(len(list(board.GetFootprints())), 0)
         self.assertFalse(has_panel_marker(board))
         self.assertTrue(has_only_single_board_outline(board))
 
-        layout2, _, _ = apply_panelization(board, config)
+        layout2, _, _, _ = apply_panelization(board, config)
         self.assertEqual(layout2.board_count, 6)
 
     def test_panelize_and_save_creates_backup_and_reloads(self) -> None:
@@ -180,17 +196,17 @@ class PanelizerIntegrationTests(unittest.TestCase):
                     continue
                 box = item.GetBoundingBox()
                 inside = (
-                    pcbnew.ToMM(box.GetLeft()) >= original_bbox.left - 0.01
-                    and pcbnew.ToMM(box.GetTop()) >= original_bbox.top - 0.01
-                    and pcbnew.ToMM(box.GetRight()) <= original_bbox.right + 0.01
-                    and pcbnew.ToMM(box.GetBottom()) <= original_bbox.bottom + 0.01
+                    pcbnew.ToMM(box.GetLeft()) >= original_bbox.left - 0.03
+                    and pcbnew.ToMM(box.GetTop()) >= original_bbox.top - 0.03
+                    and pcbnew.ToMM(box.GetRight()) <= original_bbox.right + 0.03
+                    and pcbnew.ToMM(box.GetBottom()) <= original_bbox.bottom + 0.03
                 )
                 if not inside:
                     loaded.RemoveNative(item)
             self.assertTrue(has_panel_marker(loaded))
             self.assertTrue(has_only_single_board_outline(loaded))
 
-            layout, _, _ = apply_panelization(
+            layout, _, _, _ = apply_panelization(
                 loaded,
                 PanelConfig(columns=2, rows=2, rail_left=True, rail_right=True),
             )
