@@ -30,10 +30,10 @@ class BBox:
 
 @dataclass(frozen=True)
 class PanelConfig:
-    columns: int = 5
-    rows: int = 4
+    columns: int = 2
+    rows: int = 2
     x_gap_mm: float = 0.0
-    y_gap_mm: float = 2.0
+    y_gap_mm: float = 0.0
     rail_width_mm: float = 6.0
     rail_left: bool = True
     rail_right: bool = True

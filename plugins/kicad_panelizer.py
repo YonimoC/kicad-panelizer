@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import configparser
 import json
 import math
 import os
@@ -26,11 +27,14 @@ from .panelizer import (
     original_single_board_bbox,
     panelize_and_save,
     restore_single_board_and_save,
+    stored_panel_config,
 )
 
 
 APP_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
-PLUGIN_VERSION = "1.0.5"
+PLUGIN_VERSION = "1.0.6"
+PROJECT_INI_NAME = "kicad-panelizer.ini"
+PROJECT_INI_SECTION = "panel"
 
 
 def _settings_path() -> Path:
@@ -52,9 +56,83 @@ def save_settings(values: dict[str, object]) -> None:
     path = _settings_path()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(values, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        path.write_text(
+            json.dumps(values, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
     except OSError:
         pass
+
+
+def project_ini_path(board) -> Path | None:
+    filename = board.GetFileName()
+    if not filename:
+        return None
+    return Path(filename).resolve().with_name(PROJECT_INI_NAME)
+
+
+def _config_from_ini(path: Path) -> PanelConfig | None:
+    parser = configparser.ConfigParser(interpolation=None)
+    try:
+        parser.read(path, encoding="utf-8")
+        if not parser.has_section(PROJECT_INI_SECTION):
+            return None
+        section = parser[PROJECT_INI_SECTION]
+        defaults = PanelConfig()
+        values: dict[str, object] = {}
+        for field in PanelConfig.__dataclass_fields__:
+            raw = section.get(field)
+            if raw is None:
+                continue
+            default = getattr(defaults, field)
+            if isinstance(default, bool):
+                values[field] = section.getboolean(field)
+            elif isinstance(default, int):
+                values[field] = section.getint(field)
+            else:
+                values[field] = section.getfloat(field)
+        config = PanelConfig(**values)
+        config.validate()
+        return config
+    except (OSError, ValueError, TypeError, ConfigError):
+        return None
+
+
+def config_for_project(board) -> PanelConfig:
+    path = project_ini_path(board)
+    if path is not None:
+        saved = _config_from_ini(path)
+        if saved is not None:
+            return saved
+    stored = stored_panel_config(board)
+    return stored if stored is not None else PanelConfig()
+
+
+def save_project_config(board, config: PanelConfig) -> Path | None:
+    path = project_ini_path(board)
+    if path is None:
+        return None
+    parser = configparser.ConfigParser(interpolation=None)
+    parser[PROJECT_INI_SECTION] = {
+        field: str(getattr(config, field))
+        for field in PanelConfig.__dataclass_fields__
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8", newline="\n") as stream:
+            parser.write(stream)
+    except OSError:
+        return None
+    return path
+
+
+def remember_project_config(
+    board,
+    config: PanelConfig,
+    language: str,
+) -> None:
+    save_project_config(board, config)
+    save_settings({"language": language})
 
 
 class PanelPreview(wx.Panel):
@@ -703,7 +781,7 @@ class PanelizerDialog(wx.Dialog):
                 self,
             )
             return
-        save_settings({"language": self.tr.language, "config": config.to_dict()})
+        save_settings({"language": self.tr.language})
         event.Skip()
 
 
@@ -744,7 +822,7 @@ class KiCadPanelizer(pcbnew.ActionPlugin):
             )
             return
 
-        config = PanelConfig.from_dict(settings.get("config"))  # type: ignore[arg-type]
+        config = config_for_project(board)
         parent = wx.GetActiveWindow()
         dialog = PanelizerDialog(parent, bbox, translator, config)
         try:
@@ -772,6 +850,7 @@ class KiCadPanelizer(pcbnew.ActionPlugin):
                 return
 
             result = panelize_and_save(board, config)
+            remember_project_config(board, config, translator.language)
             pcbnew.Refresh()
             wx.MessageBox(
                 translator(

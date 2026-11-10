@@ -67,7 +67,7 @@ def edge_drawings(board) -> list[object]:
         item
         for item in board.GetDrawings()
         if item.GetLayer() == pcbnew.Edge_Cuts
-        and not (isinstance(item, pcbnew.PCB_TEXT) and item.GetText() == PANEL_MARKER)
+        and not _is_panel_marker_text(item)
     ]
 
 
@@ -102,14 +102,25 @@ def board_outline_bbox(board) -> BBox:
     return _outline_bbox(edge_drawings(board))
 
 
+def _has_marker_prefix(value: str) -> bool:
+    return value == PANEL_MARKER or value.startswith(f"{PANEL_MARKER}|")
+
+
+def _is_panel_marker_footprint(footprint) -> bool:
+    return (
+        footprint.GetReference() == PANEL_MARKER
+        or _has_marker_prefix(footprint.GetValue())
+    )
+
+
+def _is_panel_marker_text(item) -> bool:
+    return isinstance(item, pcbnew.PCB_TEXT) and _has_marker_prefix(item.GetText())
+
+
 def has_panel_marker(board) -> bool:
-    for footprint in board.GetFootprints():
-        if footprint.GetReference() == PANEL_MARKER:
-            return True
-    for item in board.GetDrawings():
-        if isinstance(item, pcbnew.PCB_TEXT) and item.GetText() == PANEL_MARKER:
-            return True
-    return False
+    return any(_is_panel_marker_footprint(fp) for fp in board.GetFootprints()) or any(
+        _is_panel_marker_text(item) for item in board.GetDrawings()
+    )
 
 
 def _segment_key(item) -> tuple[tuple[int, int], tuple[int, int]] | None:
@@ -212,17 +223,21 @@ def _uuid_text(item) -> str | None:
 
 def _panel_metadata(board) -> dict[str, object] | None:
     prefix = f"{PANEL_MARKER}|"
-    for footprint in board.GetFootprints():
-        if footprint.GetReference() != PANEL_MARKER:
-            continue
-        value = footprint.GetValue()
+    values = [footprint.GetValue() for footprint in board.GetFootprints()]
+    values.extend(
+        item.GetText()
+        for item in board.GetDrawings()
+        if isinstance(item, pcbnew.PCB_TEXT)
+    )
+    for value in values:
         if not value.startswith(prefix):
-            return None
+            continue
         try:
             data = json.loads(value[len(prefix):])
         except (TypeError, ValueError):
-            return None
-        return data if isinstance(data, dict) else None
+            continue
+        if isinstance(data, dict):
+            return data
     return None
 
 
@@ -243,13 +258,30 @@ def _legacy_reference_outlines(board) -> Counter[tuple[object, ...]] | None:
     return Counter(_edge_bbox_key(item) for item in edge_drawings(backup_board))
 
 
+def _pcbnew_constant(*names: str):
+    for name in names:
+        value = getattr(pcbnew, name, None)
+        if value is not None:
+            return value
+    return None
+
+
 def _dimension_settings() -> tuple[int, int]:
     units = pcbnew.GetUserUnits()
-    if units == pcbnew.EDA_UNITS_INCH:
-        return pcbnew.DIM_UNITS_MODE_INCH, 3
-    if units == pcbnew.EDA_UNITS_MILS:
-        return pcbnew.DIM_UNITS_MODE_MILS, 0
-    return pcbnew.DIM_UNITS_MODE_MM, 2
+    inch_units = _pcbnew_constant("EDA_UNITS_INCH", "EDA_UNITS_INCHES")
+    mil_units = _pcbnew_constant("EDA_UNITS_MILS")
+    if inch_units is not None and units == inch_units:
+        mode = _pcbnew_constant("DIM_UNITS_MODE_INCH", "DIM_UNITS_MODE_INCHES")
+        if mode is not None:
+            return mode, 3
+    if mil_units is not None and units == mil_units:
+        mode = _pcbnew_constant("DIM_UNITS_MODE_MILS")
+        if mode is not None:
+            return mode, 0
+    mode = _pcbnew_constant("DIM_UNITS_MODE_MM", "DIM_UNITS_MODE_MILLIMETRES")
+    if mode is None:
+        raise PanelizerError("save_failed", detail="No compatible dimension units mode")
+    return mode, 2
 
 
 def _add_panel_dimensions(board, layout: PanelLayout) -> list[str]:
@@ -262,7 +294,9 @@ def _add_panel_dimensions(board, layout: PanelLayout) -> list[str]:
         dimension.SetHeight(_mm(height_mm))
         dimension.SetLayer(pcbnew.F_SilkS)
         dimension.SetUnitsMode(mode)
-        dimension.SetUnitsFormat(pcbnew.DIM_UNITS_FORMAT_BARE_SUFFIX)
+        units_format = _pcbnew_constant("DIM_UNITS_FORMAT_BARE_SUFFIX")
+        if units_format is not None:
+            dimension.SetUnitsFormat(units_format)
         dimension.SetPrecision(precision)
         dimension.SetTextSize(_point(1.3, 1.3))
         dimension.SetTextThickness(_mm(0.15))
@@ -295,6 +329,7 @@ def _add_marker(
     board_bbox: BBox,
     edge_ids: list[str],
     annotation_ids: list[str],
+    config: PanelConfig,
 ) -> None:
     metadata = {
         "bbox": {
@@ -305,10 +340,12 @@ def _add_marker(
         },
         "edge_ids": edge_ids,
         "annotation_ids": annotation_ids,
+        "config": config.to_dict(),
     }
     marker = pcbnew.FOOTPRINT(board)
     marker.SetReference(PANEL_MARKER)
-    marker.SetValue(f"{PANEL_MARKER}|{json.dumps(metadata, separators=(',', ':'))}")
+    marker_value = f"{PANEL_MARKER}|{json.dumps(metadata, separators=(',', ':'))}"
+    marker.SetValue(marker_value)
     marker.SetPosition(_point(0, 0))
     marker.SetAttributes(pcbnew.FP_EXCLUDE_FROM_BOM | pcbnew.FP_EXCLUDE_FROM_POS_FILES)
     marker.Reference().SetVisible(False)
@@ -366,7 +403,7 @@ def apply_panelization(board, config: PanelConfig) -> tuple[PanelLayout, int, in
         _add_mark(board, config, spec)
         mark_count += 1
     annotation_ids = _add_panel_dimensions(board, layout)
-    _add_marker(board, layout.board, original_edge_ids, annotation_ids)
+    _add_marker(board, layout.board, original_edge_ids, annotation_ids, config)
     return layout, added_edges, mark_count, len(annotation_ids)
 
 
@@ -414,6 +451,19 @@ def _bbox_from_metadata(data: dict[str, object]) -> BBox | None:
         return None
 
 
+def stored_panel_config(board) -> PanelConfig | None:
+    metadata = _panel_metadata(board)
+    raw_config = metadata.get("config") if metadata else None
+    if not isinstance(raw_config, dict):
+        return None
+    config = PanelConfig.from_dict(raw_config)
+    try:
+        config.validate()
+    except (ConfigError, TypeError, ValueError):
+        return None
+    return config
+
+
 def _edge_bbox_key(item) -> tuple[object, ...]:
     box = item.GetBoundingBox()
     return (
@@ -452,10 +502,7 @@ def _inside_bbox(item, bbox: BBox, tolerance: float) -> bool:
 
 
 def _is_generated_mark(footprint) -> bool:
-    return (
-        footprint.GetReference().startswith("MK_")
-        and footprint.GetValue() == "Panel fiducial"
-    )
+    return footprint.GetValue() == "Panel fiducial"
 
 
 def has_only_single_board_outline(board) -> bool:
@@ -579,11 +626,11 @@ def restore_single_board(board) -> RestoreResult:
 
     removed_markers = 0
     for footprint in list(board.GetFootprints()):
-        if footprint.GetReference() == PANEL_MARKER:
+        if _is_panel_marker_footprint(footprint):
             board.RemoveNative(footprint)
             removed_markers += 1
     for item in list(board.GetDrawings()):
-        if isinstance(item, pcbnew.PCB_TEXT) and item.GetText() == PANEL_MARKER:
+        if _is_panel_marker_text(item):
             board.RemoveNative(item)
             removed_markers += 1
 

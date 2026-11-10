@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pcbnew
 import wx
@@ -17,7 +21,13 @@ pcbnew.ActionPlugin.register = lambda self: None
 
 from plugins.geometry import BBox, PanelConfig, make_layout  # noqa: E402
 from plugins.i18n import Translator  # noqa: E402
-from plugins.kicad_panelizer import PanelizerDialog  # noqa: E402
+from plugins.kicad_panelizer import (  # noqa: E402
+    PanelizerDialog,
+    config_for_project,
+    load_settings,
+    project_ini_path,
+    remember_project_config,
+)
 
 
 class UiLayoutTests(unittest.TestCase):
@@ -49,7 +59,7 @@ class UiLayoutTests(unittest.TestCase):
             self.assertGreaterEqual(dialog._body_panel.GetClientSize().height, 400)
             self.assertLessEqual(dialog._ctl_columns.GetSize().width, 150)
             self.assertGreaterEqual(dialog.preview.GetSize().width, 450)
-            self.assertTrue(dialog.GetTitle().endswith("v1.0.5"))
+            self.assertTrue(dialog.GetTitle().endswith("v1.0.6"))
             self.assertEqual(
                 dialog._ctl_columns.GetSize().width,
                 dialog._mode_choice.GetSize().width,
@@ -158,6 +168,49 @@ class UiLayoutTests(unittest.TestCase):
             self.assertFalse(preview._dimension_text.IsEditable())
         finally:
             dialog.Destroy()
+
+    def test_project_parameters_survive_single_board_restore(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "project-a"
+            other_project_dir = Path(temp_dir) / "project-b"
+            project_dir.mkdir()
+            other_project_dir.mkdir()
+            with patch.dict(os.environ, {"APPDATA": temp_dir}, clear=False):
+                board = SimpleNamespace(
+                    GetFileName=lambda: str(project_dir / "remembered-project.kicad_pcb"),
+                    GetFootprints=lambda: [],
+                    GetDrawings=lambda: [],
+                )
+                other_board = SimpleNamespace(
+                    GetFileName=lambda: str(
+                        other_project_dir / "new-project.kicad_pcb"
+                    ),
+                    GetFootprints=lambda: [],
+                    GetDrawings=lambda: [],
+                )
+                expected = PanelConfig(
+                    columns=5,
+                    rows=4,
+                    x_gap_mm=0.2,
+                    y_gap_mm=2.0,
+                )
+
+                self.assertEqual(config_for_project(board), PanelConfig())
+                remember_project_config(board, expected, "zh")
+
+                ini_path = project_ini_path(board)
+                self.assertEqual(ini_path, project_dir / "kicad-panelizer.ini")
+                self.assertTrue(ini_path.is_file())
+                ini_text = ini_path.read_text(encoding="utf-8")
+                self.assertIn("[panel]", ini_text)
+                self.assertIn("columns = 5", ini_text)
+                self.assertIn("rows = 4", ini_text)
+                self.assertIn("y_gap_mm = 2.0", ini_text)
+
+                self.assertEqual(config_for_project(board), expected)
+                self.assertEqual(config_for_project(other_board), PanelConfig())
+                saved = load_settings()
+                self.assertEqual(saved, {"language": "zh"})
 
 
 if __name__ == "__main__":

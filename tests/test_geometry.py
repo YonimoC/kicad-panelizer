@@ -24,7 +24,10 @@ class GeometryTests(unittest.TestCase):
         self.board = BBox(0.0, 0.0, 20.0, 10.0)
 
     def test_default_layout_matches_reference_values(self) -> None:
-        layout = make_layout(self.board, PanelConfig())
+        layout = make_layout(
+            self.board,
+            PanelConfig(columns=5, rows=4, y_gap_mm=2.0),
+        )
         self.assertAlmostEqual(layout.pitch_x, 20.0)
         self.assertAlmostEqual(layout.pitch_y, 12.0)
         self.assertAlmostEqual(layout.array.width, 100.0)
@@ -34,8 +37,21 @@ class GeometryTests(unittest.TestCase):
         self.assertAlmostEqual(layout.panel_height, 46.0)
         self.assertEqual(layout.board_count, 20)
 
+    def test_default_parameters_are_two_by_two_with_zero_gaps(self) -> None:
+        config = PanelConfig()
+        self.assertEqual(config.columns, 2)
+        self.assertEqual(config.rows, 2)
+        self.assertEqual(config.x_gap_mm, 0.0)
+        self.assertEqual(config.y_gap_mm, 0.0)
+
     def test_all_rails_expand_panel_on_every_side(self) -> None:
-        config = PanelConfig(columns=2, rows=2, rail_top=True, rail_bottom=True)
+        config = PanelConfig(
+            columns=2,
+            rows=2,
+            y_gap_mm=2.0,
+            rail_top=True,
+            rail_bottom=True,
+        )
         layout = make_layout(self.board, config)
         self.assertAlmostEqual(layout.panel.left, -6.0)
         self.assertAlmostEqual(layout.panel.top, -6.0)
@@ -43,7 +59,10 @@ class GeometryTests(unittest.TestCase):
         self.assertAlmostEqual(layout.panel.bottom, 28.0)
 
     def test_marks_are_centered_on_enabled_side_rails(self) -> None:
-        layout = make_layout(self.board, PanelConfig())
+        layout = make_layout(
+            self.board,
+            PanelConfig(columns=5, rows=4, y_gap_mm=2.0),
+        )
         marks = mark_positions(layout)
         self.assertEqual(len(marks), 4)
         self.assertEqual({mark.side for mark in marks}, {"left", "right"})
@@ -69,6 +88,9 @@ class GeometryTests(unittest.TestCase):
         layout = make_layout(
             self.board,
             PanelConfig(
+                columns=5,
+                rows=4,
+                y_gap_mm=2.0,
                 rail_top=True,
                 rail_bottom=True,
             ),
@@ -93,6 +115,7 @@ class GeometryTests(unittest.TestCase):
             PanelConfig(
                 columns=2,
                 rows=2,
+                y_gap_mm=2.0,
                 rail_top=True,
                 rail_bottom=True,
             ),

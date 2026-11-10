@@ -33,15 +33,15 @@
             ],
             "versions": [
                 {
-                    "version": "1.0.5",
+                    "version": "1.0.6",
                     "status": "stable",
                     "kicad_version": "8.0",
                     "kicad_version_max": "11.99",
                     "runtime": "swig",
-                    "download_url": "https://github.com/YonimoC/kicad-panelizer/releases/download/v1.0.5/kicad-panelizer.zip",
-                    "download_sha256": "ad3834b80b475a494f6006590c39de020bb91e527ece60a79300c8223e631213",
-                    "download_size": 23740,
-                    "install_size": 76388
+                    "download_url": "https://github.com/YonimoC/kicad-panelizer/releases/download/v1.0.6/kicad-panelizer.zip",
+                    "download_sha256": "538396a910951af891b547701290b5918b6fbd521bd1ec5675b60ea129e8d9b0",
+                    "download_size": 24579,
+                    "install_size": 80214
                 }
             ]
         }

@@ -5,6 +5,8 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pcbnew
 
@@ -13,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from plugins.geometry import PanelConfig  # noqa: E402
+import plugins.panelizer as panelizer_module  # noqa: E402
 from plugins.panelizer import (  # noqa: E402
     PanelizerError,
     apply_panelization,
@@ -24,6 +27,7 @@ from plugins.panelizer import (  # noqa: E402
     panelize_and_save,
     restore_single_board,
     restore_single_board_and_save,
+    stored_panel_config,
 )
 
 
@@ -66,6 +70,7 @@ class PanelizerIntegrationTests(unittest.TestCase):
         self.assertGreater(added_edges, 0)
         self.assertEqual(added_marks, 4)
         self.assertEqual(added_dimensions, 2)
+        self.assertEqual(stored_panel_config(board), config)
         self.assertTrue(has_panel_marker(board))
         self.assertEqual(len(list(board.GetFootprints())), 5)
 
@@ -130,6 +135,22 @@ class PanelizerIntegrationTests(unittest.TestCase):
         self.assertEqual(len(list(board.GetFootprints())), 0)
         self.assertFalse(has_panel_marker(board))
         self.assertTrue(has_only_single_board_outline(board))
+
+    def test_dimension_units_support_kicad8_enum_names(self) -> None:
+        kicad8_api = SimpleNamespace(
+            GetUserUnits=lambda: 0,
+            EDA_UNITS_INCHES=0,
+            EDA_UNITS_MILS=5,
+            DIM_UNITS_MODE_INCHES=0,
+            DIM_UNITS_MODE_MILS=1,
+            DIM_UNITS_MODE_MILLIMETRES=2,
+        )
+        with patch.object(panelizer_module, "pcbnew", kicad8_api):
+            self.assertEqual(panelizer_module._dimension_settings(), (0, 3))
+            kicad8_api.GetUserUnits = lambda: 5
+            self.assertEqual(panelizer_module._dimension_settings(), (1, 0))
+            kicad8_api.GetUserUnits = lambda: 1
+            self.assertEqual(panelizer_module._dimension_settings(), (2, 2))
 
     def test_panelize_and_save_creates_backup_and_reloads(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -238,6 +259,90 @@ class PanelizerIntegrationTests(unittest.TestCase):
             )
             self.assertEqual(layout.board_count, 4)
             self.assertTrue(has_panel_marker(loaded))
+
+    def test_kicad8_reference_normalization_keeps_panel_marker_detection(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "kicad8-references.kicad_pcb"
+            board = make_rectangular_board()
+            self.assertTrue(pcbnew.SaveBoard(str(path), board))
+            loaded = pcbnew.LoadBoard(str(path))
+            panelize_and_save(
+                loaded,
+                PanelConfig(columns=2, rows=2, rail_left=True, rail_right=True),
+            )
+
+            for footprint in loaded.GetFootprints():
+                if footprint.GetValue() == "Panel fiducial" or "KICAD_PANELIZER_V1" in (
+                    footprint.GetReference()
+                ):
+                    footprint.SetReference("REF**")
+            for item in list(loaded.GetDrawings()):
+                if isinstance(item, pcbnew.PCB_TEXT) and item.GetText().startswith(
+                    "KICAD_PANELIZER_V1|"
+                ):
+                    loaded.RemoveNative(item)
+
+            self.assertTrue(pcbnew.SaveBoard(str(path), loaded))
+            reopened = pcbnew.LoadBoard(str(path))
+            self.assertTrue(has_panel_marker(reopened))
+
+            layout, _, _, _ = apply_panelization(
+                reopened,
+                PanelConfig(columns=3, rows=2, y_gap_mm=2.0),
+            )
+            self.assertEqual(layout.board_count, 6)
+            self.assertEqual(
+                sum(
+                    1
+                    for footprint in reopened.GetFootprints()
+                    if footprint.GetReference().startswith("MK_")
+                ),
+                4,
+            )
+
+    def test_hidden_text_marker_recovers_metadata_without_marker_footprint(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "kicad8-text-marker.kicad_pcb"
+            board = make_rectangular_board()
+            self.assertTrue(pcbnew.SaveBoard(str(path), board))
+            loaded = pcbnew.LoadBoard(str(path))
+            panelize_and_save(
+                loaded,
+                PanelConfig(columns=2, rows=2, rail_left=True, rail_right=True),
+            )
+            marker_value = next(
+                footprint.GetValue()
+                for footprint in loaded.GetFootprints()
+                if "KICAD_PANELIZER_V1" in footprint.GetReference()
+            )
+            for footprint in list(loaded.GetFootprints()):
+                if "KICAD_PANELIZER_V1" in footprint.GetReference():
+                    loaded.RemoveNative(footprint)
+            legacy_text = pcbnew.PCB_TEXT(loaded)
+            legacy_text.SetText(marker_value)
+            legacy_text.SetLayer(pcbnew.Dwgs_User)
+            legacy_text.SetPosition(pcbnew.VECTOR2I_MM(0, 0))
+            legacy_text.SetTextSize(pcbnew.VECTOR2I_MM(0.8, 0.8))
+            loaded.Add(legacy_text)
+            self.assertTrue(pcbnew.SaveBoard(str(path), loaded))
+
+            reopened = pcbnew.LoadBoard(str(path))
+            self.assertTrue(has_panel_marker(reopened))
+            layout, added_edges, _, _ = apply_panelization(
+                reopened,
+                PanelConfig(columns=3, rows=2, y_gap_mm=2.0),
+            )
+            self.assertEqual(layout.board_count, 6)
+            self.assertEqual(len(edge_drawings(reopened)), 4 + added_edges)
+            self.assertFalse(
+                any(
+                    isinstance(item, pcbnew.PCB_TEXT)
+                    and item.GetText().startswith("KICAD_PANELIZER_V1|")
+                    for item in reopened.GetDrawings()
+                )
+            )
 
     def test_irregular_outline_shapes_are_arrayed_and_restored(self) -> None:
         board = make_rectangular_board()
