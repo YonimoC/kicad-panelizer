@@ -10,7 +10,15 @@ from pathlib import Path
 import pcbnew
 import wx
 
-from .geometry import BBox, ConfigError, PanelConfig, PanelLayout, make_layout, mark_positions
+from .geometry import (
+    BBox,
+    ConfigError,
+    PanelConfig,
+    PanelLayout,
+    make_layout,
+    mark_positions,
+    rail_rectangles,
+)
 from .i18n import LANGUAGE_LABELS, Translator
 from .panelizer import (
     PanelizerError,
@@ -22,7 +30,7 @@ from .panelizer import (
 
 
 APP_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
-PLUGIN_VERSION = "1.0.4"
+PLUGIN_VERSION = "1.0.5"
 
 
 def _settings_path() -> Path:
@@ -49,7 +57,7 @@ def save_settings(values: dict[str, object]) -> None:
         pass
 
 
-class PanelPreview(wx.StaticBitmap):
+class PanelPreview(wx.Panel):
     def __init__(self, parent, translator: Translator) -> None:
         super().__init__(parent)
         self.tr = translator
@@ -59,6 +67,25 @@ class PanelPreview(wx.StaticBitmap):
         self.error = ""
         self._bitmap: wx.Bitmap | None = None
         self.SetMinSize((460, 410))
+
+        self._image = wx.StaticBitmap(self)
+        text_style = wx.TE_MULTILINE | wx.TE_READONLY | wx.BORDER_NONE
+        if hasattr(wx, "TE_NO_VSCROLL"):
+            text_style |= wx.TE_NO_VSCROLL
+        self._dimension_text = wx.TextCtrl(self, style=text_style)
+        self._dimension_text.SetBackgroundColour(wx.Colour(248, 249, 251))
+        self._dimension_text.SetForegroundColour(wx.Colour(36, 57, 76))
+        self._dimension_text.SetMinSize((-1, 48))
+
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer.Add(self._image, 1, wx.EXPAND)
+        sizer.Add(
+            self._dimension_text,
+            0,
+            wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM,
+            12,
+        )
+        self.SetSizer(sizer)
         self.Bind(wx.EVT_SIZE, self._on_size)
 
     def set_data(
@@ -71,6 +98,7 @@ class PanelPreview(wx.StaticBitmap):
         self.layout = layout
         self.single_mode = False
         self.error = error
+        self._refresh_dimensions()
         self._refresh_bitmap()
 
     def set_single_board(self, board: BBox) -> None:
@@ -78,14 +106,36 @@ class PanelPreview(wx.StaticBitmap):
         self.layout = None
         self.single_mode = True
         self.error = ""
+        self._refresh_dimensions()
         self._refresh_bitmap()
 
     def _on_size(self, event) -> None:
         event.Skip()
         self._refresh_bitmap()
 
+    def _refresh_dimensions(self) -> None:
+        if self.board is None:
+            self._dimension_text.SetValue("")
+            return
+        board_text = self.tr(
+            "board_size", width=self.board.width, height=self.board.height
+        )
+        if self.layout is None:
+            panel_text = self.tr("panel_size_unavailable")
+        else:
+            panel_text = self.tr(
+                "panel_size_counts",
+                width=self.layout.panel_width,
+                height=self.layout.panel_height,
+                columns=self.layout.config.columns,
+                rows=self.layout.config.rows,
+                count=self.layout.board_count,
+            )
+        self._dimension_text.SetValue(f"{board_text}\n{panel_text}")
+
     def _refresh_bitmap(self) -> None:
-        size = self.GetClientSize()
+        self._refresh_dimensions()
+        size = self._image.GetClientSize()
         if size.width < 2 or size.height < 2:
             return
         bitmap = wx.Bitmap(size.width, size.height)
@@ -95,7 +145,7 @@ class PanelPreview(wx.StaticBitmap):
         finally:
             dc.SelectObject(wx.NullBitmap)
         self._bitmap = bitmap
-        self.SetBitmap(bitmap)
+        self._image.SetBitmap(bitmap)
 
     def _render(self, dc: wx.DC, width: int, height: int) -> None:
         dc.SetBackground(wx.Brush(wx.Colour(248, 249, 251)))
@@ -113,14 +163,14 @@ class PanelPreview(wx.StaticBitmap):
 
         if self.single_mode:
             panel = self.board
-            available_w = width - 76
-            available_h = height - 110
+            available_w = width - 48
+            available_h = height - 48
             scale = min(
                 available_w / max(panel.width, 0.01),
                 available_h / max(panel.height, 0.01),
             )
             origin_x = (width - panel.width * scale) / 2
-            origin_y = 42 + (available_h - panel.height * scale) / 2
+            origin_y = 24 + (available_h - panel.height * scale) / 2
             dc.SetPen(wx.Pen(wx.Colour(54, 69, 91), 2))
             dc.SetBrush(wx.Brush(wx.Colour(218, 237, 252)))
             dc.DrawRectangle(
@@ -129,14 +179,6 @@ class PanelPreview(wx.StaticBitmap):
                 max(1, int(panel.width * scale)),
                 max(1, int(panel.height * scale)),
             )
-            dc.SetFont(self.GetFont())
-            dc.SetTextForeground(wx.Colour(50, 57, 68))
-            dc.DrawText(
-                self.tr("board_size", width=panel.width, height=panel.height),
-                18,
-                12,
-            )
-            dc.DrawText(self.tr("single_board_preview"), 18, height - 52)
             return
 
         layout = self.layout
@@ -144,11 +186,11 @@ class PanelPreview(wx.StaticBitmap):
             return
         config = layout.config
         panel = layout.panel
-        available_w = width - 76
-        available_h = height - 110
+        available_w = width - 48
+        available_h = height - 48
         scale = min(available_w / max(panel.width, 0.01), available_h / max(panel.height, 0.01))
         origin_x = (width - panel.width * scale) / 2
-        origin_y = 42 + (available_h - panel.height * scale) / 2
+        origin_y = 24 + (available_h - panel.height * scale) / 2
 
         def px(x: float) -> int:
             return int(origin_x + (x - panel.left) * scale)
@@ -166,12 +208,10 @@ class PanelPreview(wx.StaticBitmap):
         board_fill_alt = wx.Colour(198, 224, 246)
         edge = wx.Colour(38, 62, 88)
         cell_edge = wx.Colour(61, 126, 181)
-        dc.SetPen(wx.Pen(wx.Colour(188, 198, 212), 1))
-        dc.SetBrush(wx.Brush(dock))
-        dc.DrawRectangle(*rect(panel))
-        dc.SetPen(wx.Pen(edge, 3))
-        dc.SetBrush(wx.TRANSPARENT_BRUSH)
-        dc.DrawRectangle(*rect(panel))
+        for rail in rail_rectangles(layout):
+            dc.SetPen(wx.Pen(edge, 2))
+            dc.SetBrush(wx.Brush(dock))
+            dc.DrawRectangle(*rect(rail))
 
         dc.SetFont(self.GetFont())
         for row in range(config.rows):
@@ -212,31 +252,16 @@ class PanelPreview(wx.StaticBitmap):
             dc.SetBrush(wx.Brush(wx.Colour(232, 61, 68) if spec.layer == "F" else wx.Colour(44, 119, 203)))
             dc.DrawCircle(center, copper_radius)
 
+        legend_y = height - 14
         dc.SetFont(self.GetFont())
         dc.SetTextForeground(wx.Colour(50, 57, 68))
-        top_text = self.tr(
-            "board_size", width=self.board.width, height=self.board.height
-        )
-        bottom_text = self.tr(
-            "panel_size", width=layout.panel_width, height=layout.panel_height
-        )
-        count_text = self.tr(
-            "counts",
-            columns=config.columns,
-            rows=config.rows,
-            count=layout.board_count,
-        )
-        dc.DrawText(top_text, 18, 12)
-        dc.DrawText(f"{bottom_text}   |   {count_text}", 18, height - 52)
-
-        legend_y = height - 26
         dc.SetPen(wx.Pen(wx.Colour(120, 80, 30), 1))
         dc.SetBrush(wx.Brush(wx.Colour(232, 61, 68)))
-        dc.DrawCircle(24, legend_y, 5)
-        dc.DrawText(self.tr("top_mark_legend"), 36, legend_y - 8)
+        dc.DrawCircle(18, legend_y, 5)
+        dc.DrawText(self.tr("top_mark_legend"), 30, legend_y - 8)
         dc.SetBrush(wx.Brush(wx.Colour(44, 119, 203)))
-        dc.DrawCircle(150, legend_y, 5)
-        dc.DrawText(self.tr("bottom_mark_legend"), 162, legend_y - 8)
+        dc.DrawCircle(144, legend_y, 5)
+        dc.DrawText(self.tr("bottom_mark_legend"), 156, legend_y - 8)
 
 
 class PanelizerDialog(wx.Dialog):

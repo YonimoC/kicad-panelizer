@@ -109,6 +109,29 @@ class PanelLayout:
         )
 
 
+def rail_rectangles(layout: PanelLayout) -> list[BBox]:
+    """Return one complete rectangle for each enabled process rail.
+
+    Each rail spans the full panel in its length direction. Rectangles overlap
+    at the corners by design; no attempt is made to split or merge coincident
+    Edge.Cuts segments.
+    """
+
+    config = layout.config
+    panel = layout.panel
+    width = config.rail_width_mm
+    rails: list[BBox] = []
+    if config.rail_left:
+        rails.append(BBox(panel.left, panel.top, panel.left + width, panel.bottom))
+    if config.rail_right:
+        rails.append(BBox(panel.right - width, panel.top, panel.right, panel.bottom))
+    if config.rail_top:
+        rails.append(BBox(panel.left, panel.top, panel.right, panel.top + width))
+    if config.rail_bottom:
+        rails.append(BBox(panel.left, panel.bottom - width, panel.right, panel.bottom))
+    return rails
+
+
 @dataclass(frozen=True)
 class MarkSpec:
     side: Literal["left", "right", "top", "bottom"]
@@ -179,8 +202,8 @@ def mark_positions(layout: PanelLayout) -> list[MarkSpec]:
         x = layout.panel.right - rail_half
         marks.extend(
             (
-                MarkSpec("right", "F", x, top_y),
-                MarkSpec("right", "B", x, bottom_y),
+                MarkSpec("right", "F", x, bottom_y),
+                MarkSpec("right", "B", x, top_y),
             )
         )
     if config.rail_top:
@@ -195,8 +218,8 @@ def mark_positions(layout: PanelLayout) -> list[MarkSpec]:
         y = layout.panel.bottom - rail_half
         marks.extend(
             (
-                MarkSpec("bottom", "F", left_x, y),
-                MarkSpec("bottom", "B", right_x, y),
+                MarkSpec("bottom", "F", right_x, y),
+                MarkSpec("bottom", "B", left_x, y),
             )
         )
     return marks

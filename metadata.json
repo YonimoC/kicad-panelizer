@@ -2,7 +2,7 @@
     "$schema": "https://go.kicad.org/pcm/schemas/v2",
     "name": "KiCad Panelizer",
     "description": "参数化 V 割拼板、工艺边与顶/底面 Mark 点",
-    "description_full": "在 KiCad PCB 编辑器中按当前板级 Edge.Cuts 外边框生成参数化拼板。仅复制外边框，保留原始单板内容；支持行/列数、行/列距、四边工艺边、1 mm 铜/3 mm 开窗的顶面及底面 Mark 点。尺寸按 Edge.Cuts 中心线计算，不受线宽影响；拼板后在 F.SilkS 添加横纵尺寸标注并跟随 KiCad 当前单位。支持单板模式原地删除插件新增内容，不覆盖原板；拼板前仅保留一个固定的 .kicad_pcb.bak 备份。界面支持中文与 English。兼容 KiCad 8.0 ~ 11（SWIG Action Plugin）。",
+    "description_full": "在 KiCad PCB 编辑器中按当前板级 Edge.Cuts 外边框生成参数化拼板。完整复制每条外框，保留圆弧、圆形等异形轮廓和原始单板内容；每个启用侧独立生成完整矩形工艺边，角部允许重叠；已拼板时可直接修改参数重新拼板。支持行/列数、行/列距、1 mm 铜/3 mm 开窗且按对角配对放置的顶面及底面 Mark 点。尺寸按 Edge.Cuts 中心线计算，不受线宽影响；拼板后在 F.SilkS 添加横纵尺寸标注并跟随 KiCad 当前单位。支持单板模式原地删除插件新增内容，不覆盖原板；拼板前仅保留一个固定的 .kicad_pcb.bak 备份。界面支持中文与 English。兼容 KiCad 8.0 ~ 11（SWIG Action Plugin）。",
     "identifier": "com.github.YonimoC.kicad-panelizer",
     "type": "plugin",
     "author": {
@@ -31,7 +31,7 @@
     ],
     "versions": [
         {
-            "version": "1.0.4",
+            "version": "1.0.5",
             "status": "stable",
             "kicad_version": "8.0",
             "kicad_version_max": "11.99",

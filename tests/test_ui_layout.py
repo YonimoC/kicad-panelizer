@@ -49,7 +49,7 @@ class UiLayoutTests(unittest.TestCase):
             self.assertGreaterEqual(dialog._body_panel.GetClientSize().height, 400)
             self.assertLessEqual(dialog._ctl_columns.GetSize().width, 150)
             self.assertGreaterEqual(dialog.preview.GetSize().width, 450)
-            self.assertTrue(dialog.GetTitle().endswith("v1.0.4"))
+            self.assertTrue(dialog.GetTitle().endswith("v1.0.5"))
             self.assertEqual(
                 dialog._ctl_columns.GetSize().width,
                 dialog._mode_choice.GetSize().width,
@@ -135,6 +135,27 @@ class UiLayoutTests(unittest.TestCase):
                     }:
                         board_pixels += 1
             self.assertGreater(board_pixels, 10000)
+        finally:
+            dialog.Destroy()
+
+    def test_preview_dimensions_are_copyable_vertical_text(self) -> None:
+        dialog = self.make_dialog("zh")
+        try:
+            preview = dialog.preview
+            preview.set_data(
+                dialog.board_bbox,
+                make_layout(
+                    dialog.board_bbox,
+                    PanelConfig(columns=2, rows=2, y_gap_mm=2.0),
+                ),
+            )
+            lines = preview._dimension_text.GetValue().splitlines()
+            self.assertEqual(len(lines), 2)
+            self.assertTrue(lines[0].startswith("单板尺寸："))
+            self.assertTrue(lines[1].startswith("拼板尺寸："))
+            self.assertIn("2 × 2", lines[1])
+            self.assertIn("共 4 片", lines[1])
+            self.assertFalse(preview._dimension_text.IsEditable())
         finally:
             dialog.Destroy()
 

@@ -51,12 +51,17 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "top_feed_offset": "Top-layer feed offset (mm)",
         "bottom_feed_offset": "Bottom-layer feed offset (mm)",
         "mark_note": (
-            "Fiducials are centered on each enabled rail. F.Cu marks use the "
-            "top feed offset; B.Cu marks use the bottom feed offset."
+            "Fiducials are centered on each enabled rail and placed diagonally. "
+            "F.Cu and B.Cu marks use the top and bottom feed offsets respectively."
         ),
         "preview": "Preview",
         "board_size": "Single board: {width:.2f} x {height:.2f} mm",
         "panel_size": "Panel: {width:.2f} x {height:.2f} mm",
+        "panel_size_counts": (
+            "Panel: {width:.2f} x {height:.2f} mm "
+            "({columns} x {rows}, {count} boards)"
+        ),
+        "panel_size_unavailable": "Panel: -",
         "single_board_preview": "Single-board restoration preview",
         "counts": "{columns} x {rows}, {count} boards",
         "preview_error": "Preview unavailable",
@@ -148,12 +153,14 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "top_feed_offset": "顶层进板位置 (mm)",
         "bottom_feed_offset": "底层进板位置 (mm)",
         "mark_note": (
-            "Mark 点居中放置在启用的工艺边上。顶层 F.Cu Mark 使用顶部进板距离，"
-            "底层 B.Cu Mark 使用底部进板距离。"
+            "Mark 点居中放置在启用的工艺边上，并按对角方式配对。"
+            "顶层 F.Cu Mark 使用顶部进板距离，底层 B.Cu Mark 使用底部进板距离。"
         ),
         "preview": "预览",
         "board_size": "单板尺寸：{width:.2f} × {height:.2f} mm",
         "panel_size": "拼板尺寸：{width:.2f} × {height:.2f} mm",
+        "panel_size_counts": "拼板尺寸：{width:.2f} × {height:.2f} mm（{columns} × {rows}，共 {count} 片）",
+        "panel_size_unavailable": "拼板尺寸：—",
         "single_board_preview": "单板恢复预览",
         "counts": "{columns} × {rows}，共 {count} 片",
         "preview_error": "无法预览",

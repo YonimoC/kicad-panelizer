@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 import sys
 import tempfile
 import unittest
@@ -105,9 +106,20 @@ class PanelizerIntegrationTests(unittest.TestCase):
         self.assertTrue(bottom_pad.GetLayerSet().Contains(pcbnew.B_Cu))
         self.assertTrue(bottom_pad.GetLayerSet().Contains(pcbnew.B_Mask))
 
-        with self.assertRaises(PanelizerError) as context:
-            apply_panelization(board, config)
-        self.assertEqual(context.exception.code, "already_panelized")
+        layout2, added_edges2, _, _ = apply_panelization(
+            board,
+            PanelConfig(columns=4, rows=2, rail_left=True, rail_right=True),
+        )
+        self.assertEqual(layout2.board_count, 8)
+        self.assertEqual(len(edge_drawings(board)), 4 + added_edges2)
+        self.assertEqual(len(list(board.GetFootprints())), 5)
+        source_texts = [
+            item.GetText()
+            for item in board.GetDrawings()
+            if isinstance(item, pcbnew.PCB_TEXT)
+        ]
+        self.assertEqual(source_texts.count("SOURCE_BOARD_CONTENT"), 1)
+        self.assertTrue(has_panel_marker(board))
 
         restored = restore_single_board(board)
         self.assertGreater(restored.removed_edges, 0)
@@ -118,9 +130,6 @@ class PanelizerIntegrationTests(unittest.TestCase):
         self.assertEqual(len(list(board.GetFootprints())), 0)
         self.assertFalse(has_panel_marker(board))
         self.assertTrue(has_only_single_board_outline(board))
-
-        layout2, _, _, _ = apply_panelization(board, config)
-        self.assertEqual(layout2.board_count, 6)
 
     def test_panelize_and_save_creates_backup_and_reloads(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -144,6 +153,23 @@ class PanelizerIntegrationTests(unittest.TestCase):
             self.assertTrue(has_panel_marker(reloaded))
             self.assertGreater(len(edge_drawings(reloaded)), original_edge_count)
             self.assertGreater(board_outline_bbox(reloaded).width, original_size.width)
+            self.assertEqual(len(list(reloaded.GetFootprints())), 5)
+
+            # Re-panel the already-panelized board directly. The fixed backup
+            # must remain the original single board, not the previous panel.
+            repanel = panelize_and_save(
+                reloaded,
+                PanelConfig(columns=3, rows=2, y_gap_mm=2.0),
+            )
+            self.assertEqual(repanel.layout.board_count, 6)
+            self.assertEqual(repanel.backup_path, path.with_name("demo.kicad_pcb.bak"))
+            with tempfile.TemporaryDirectory() as reference_dir:
+                reference_path = Path(reference_dir) / "reference.kicad_pcb"
+                shutil.copy2(repanel.backup_path, reference_path)
+                backup_board = pcbnew.LoadBoard(str(reference_path))
+            self.assertEqual(len(edge_drawings(backup_board)), original_edge_count)
+            reloaded = pcbnew.LoadBoard(str(path))
+            self.assertTrue(has_panel_marker(reloaded))
             self.assertEqual(len(list(reloaded.GetFootprints())), 5)
 
             restored = restore_single_board_and_save(reloaded)
@@ -212,6 +238,82 @@ class PanelizerIntegrationTests(unittest.TestCase):
             )
             self.assertEqual(layout.board_count, 4)
             self.assertTrue(has_panel_marker(loaded))
+
+    def test_irregular_outline_shapes_are_arrayed_and_restored(self) -> None:
+        board = make_rectangular_board()
+        cutout = pcbnew.PCB_SHAPE(board)
+        cutout.SetShape(pcbnew.S_CIRCLE)
+        cutout.SetLayer(pcbnew.Edge_Cuts)
+        cutout.SetWidth(pcbnew.FromMM(0.05))
+        cutout.SetCenter(pcbnew.VECTOR2I_MM(10, 5))
+        cutout.SetEnd(pcbnew.VECTOR2I_MM(12, 5))
+        board.Add(cutout)
+        original_count = len(edge_drawings(board))
+
+        layout, _, _, _ = apply_panelization(
+            board,
+            PanelConfig(columns=2, rows=2, rail_left=True, rail_right=True),
+        )
+        self.assertEqual(layout.board_count, 4)
+        self.assertGreater(len(edge_drawings(board)), original_count)
+        self.assertEqual(
+            sum(
+                1
+                for item in edge_drawings(board)
+                if item.GetShape() == pcbnew.S_CIRCLE
+            ),
+            4,
+        )
+
+        restore_single_board(board)
+        self.assertEqual(len(edge_drawings(board)), original_count)
+        self.assertEqual(
+            sum(
+                1
+                for item in edge_drawings(board)
+                if item.GetShape() == pcbnew.S_CIRCLE
+            ),
+            1,
+        )
+
+    def test_process_rails_are_independent_rectangles_not_one_panel_outline(
+        self,
+    ) -> None:
+        board = make_rectangular_board()
+        apply_panelization(
+            board,
+            PanelConfig(
+                columns=2,
+                rows=2,
+                y_gap_mm=2.0,
+                rail_left=True,
+                rail_right=True,
+                rail_top=False,
+                rail_bottom=False,
+            ),
+        )
+
+        segments = set()
+        for item in edge_drawings(board):
+            if item.GetShape() != pcbnew.S_SEGMENT:
+                continue
+            start = item.GetStart()
+            end = item.GetEnd()
+            start_mm = (pcbnew.ToMM(start.x), pcbnew.ToMM(start.y))
+            end_mm = (pcbnew.ToMM(end.x), pcbnew.ToMM(end.y))
+            segments.add(tuple(sorted((start_mm, end_mm))))
+
+        def vertices(x1: float, y1: float, x2: float, y2: float):
+            return tuple(sorted(((x1, y1), (x2, y2))))
+
+        # Each rail has its own inner boundary.
+        self.assertIn(vertices(0, 0, 0, 22), segments)
+        self.assertIn(vertices(40, 0, 40, 22), segments)
+
+        # There must not be one long horizontal outline spanning the whole
+        # panel; that would incorrectly represent both rails as one large frame.
+        self.assertNotIn(vertices(-6, 0, 46, 0), segments)
+        self.assertNotIn(vertices(-6, 22, 46, 22), segments)
 
 
 if __name__ == "__main__":

@@ -10,8 +10,8 @@
     "schema_version": 2,
     "packages": {
         "url": "https://raw.githubusercontent.com/YonimoC/kicad-panelizer/main/docs/packages.json",
-        "sha256": "2991e8158d8b9e796279ee786364c93e9a7293f90987d397d9426e88335b7da7",
-        "update_timestamp": 1794234649,
-        "update_time_utc": "2026-11-09 14:30:49"
+        "sha256": "d3a521b1af7d5c357433865dafedfbea4de4e11a91b367da62dd53173f7dec4e",
+        "update_timestamp": 1794273741,
+        "update_time_utc": "2026-11-10 01:22:21"
     }
 }

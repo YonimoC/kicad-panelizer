@@ -14,6 +14,7 @@ from plugins.geometry import (  # noqa: E402
     PanelConfig,
     make_layout,
     mark_positions,
+    rail_rectangles,
 )
 from plugins.i18n import TRANSLATIONS, translation_keys  # noqa: E402
 
@@ -51,6 +52,57 @@ class GeometryTests(unittest.TestCase):
         self.assertAlmostEqual(marks[0].y, 10.0)
         self.assertAlmostEqual(marks[1].y, 31.0)
         self.assertAlmostEqual(marks[2].x, 103.0)
+        front_positions = {
+            (round(mark.x, 3), round(mark.y, 3))
+            for mark in marks
+            if mark.layer == "F"
+        }
+        bottom_positions = {
+            (round(mark.x, 3), round(mark.y, 3))
+            for mark in marks
+            if mark.layer == "B"
+        }
+        self.assertEqual(front_positions, {(-3.0, 10.0), (103.0, 31.0)})
+        self.assertEqual(bottom_positions, {(-3.0, 31.0), (103.0, 10.0)})
+
+    def test_top_and_bottom_rail_marks_are_placed_diagonally(self) -> None:
+        layout = make_layout(
+            self.board,
+            PanelConfig(
+                rail_top=True,
+                rail_bottom=True,
+            ),
+        )
+        marks = mark_positions(layout)
+        front_positions = {
+            (round(mark.x, 3), round(mark.y, 3))
+            for mark in marks
+            if mark.side in {"top", "bottom"} and mark.layer == "F"
+        }
+        bottom_positions = {
+            (round(mark.x, 3), round(mark.y, 3))
+            for mark in marks
+            if mark.side in {"top", "bottom"} and mark.layer == "B"
+        }
+        self.assertEqual(front_positions, {(4.0, -3.0), (91.0, 49.0)})
+        self.assertEqual(bottom_positions, {(91.0, -3.0), (4.0, 49.0)})
+
+    def test_enabled_rails_are_complete_independent_rectangles(self) -> None:
+        layout = make_layout(
+            self.board,
+            PanelConfig(
+                columns=2,
+                rows=2,
+                rail_top=True,
+                rail_bottom=True,
+            ),
+        )
+        left, right, top, bottom = rail_rectangles(layout)
+
+        self.assertEqual(left, BBox(-6.0, -6.0, 0.0, 28.0))
+        self.assertEqual(right, BBox(40.0, -6.0, 46.0, 28.0))
+        self.assertEqual(top, BBox(-6.0, -6.0, 46.0, 0.0))
+        self.assertEqual(bottom, BBox(-6.0, 22.0, 46.0, 28.0))
 
     def test_invalid_configuration_is_rejected(self) -> None:
         with self.assertRaises(ConfigError) as context:

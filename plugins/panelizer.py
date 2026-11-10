@@ -11,7 +11,15 @@ import tempfile
 
 import pcbnew
 
-from .geometry import BBox, ConfigError, PanelConfig, PanelLayout, make_layout, mark_positions
+from .geometry import (
+    BBox,
+    ConfigError,
+    PanelConfig,
+    PanelLayout,
+    make_layout,
+    mark_positions,
+    rail_rectangles,
+)
 
 
 PANEL_MARKER = "KICAD_PANELIZER_V1"
@@ -114,6 +122,22 @@ def _segment_key(item) -> tuple[tuple[int, int], tuple[int, int]] | None:
     return (first, second) if first <= second else (second, first)
 
 
+def _append_segment(
+    board,
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+) -> None:
+    shape = pcbnew.PCB_SHAPE(board)
+    shape.SetShape(pcbnew.S_SEGMENT)
+    shape.SetLayer(pcbnew.Edge_Cuts)
+    shape.SetWidth(_mm(EDGE_WIDTH_MM))
+    shape.SetStart(_point(x1, y1))
+    shape.SetEnd(_point(x2, y2))
+    board.Add(shape)
+
+
 def _add_segment(
     board,
     x1: float,
@@ -130,103 +154,19 @@ def _add_segment(
     if key in seen_segments:
         return 0
 
-    shape = pcbnew.PCB_SHAPE(board)
-    shape.SetShape(pcbnew.S_SEGMENT)
-    shape.SetLayer(pcbnew.Edge_Cuts)
-    shape.SetWidth(_mm(EDGE_WIDTH_MM))
-    shape.SetStart(p1)
-    shape.SetEnd(p2)
-    board.Add(shape)
+    _append_segment(board, x1, y1, x2, y2)
     seen_segments.add(key)
     return 1
 
 
-def _add_outer_outline(
-    board,
-    layout: PanelLayout,
-    seen_segments: set[tuple[tuple[int, int], tuple[int, int]]],
-) -> int:
-    panel = layout.panel
-    existing = [
-        item
-        for item in board.GetDrawings()
-        if item.GetLayer() == pcbnew.Edge_Cuts
-        and item.GetShape() == pcbnew.S_SEGMENT
-    ]
+def _add_rail_rectangles(board, layout: PanelLayout) -> int:
     added = 0
-
-    def add_side(vertical: bool, fixed: float, low: float, high: float) -> None:
-        nonlocal added
-        fixed_i = _mm(fixed)
-        low_i, high_i = _mm(low), _mm(high)
-        intervals: list[tuple[int, int]] = []
-        for item in existing:
-            start, end = item.GetStart(), item.GetEnd()
-            if vertical and start.x == end.x == fixed_i:
-                first, second = sorted((start.y, end.y))
-            elif not vertical and start.y == end.y == fixed_i:
-                first, second = sorted((start.x, end.x))
-            else:
-                continue
-            first = max(first, low_i)
-            second = min(second, high_i)
-            if first < second:
-                intervals.append((first, second))
-
-        intervals.sort()
-        merged: list[tuple[int, int]] = []
-        for first, second in intervals:
-            if merged and first <= merged[-1][1]:
-                merged[-1] = (merged[-1][0], max(merged[-1][1], second))
-            else:
-                merged.append((first, second))
-
-        cursor = low_i
-        for first, second in merged:
-            if first > cursor:
-                if vertical:
-                    added += _add_segment(
-                        board,
-                        fixed,
-                        _to_mm(cursor),
-                        fixed,
-                        _to_mm(first),
-                        seen_segments,
-                    )
-                else:
-                    added += _add_segment(
-                        board,
-                        _to_mm(cursor),
-                        fixed,
-                        _to_mm(first),
-                        fixed,
-                        seen_segments,
-                    )
-            cursor = max(cursor, second)
-        if cursor < high_i:
-            if vertical:
-                added += _add_segment(
-                    board,
-                    fixed,
-                    _to_mm(cursor),
-                    fixed,
-                    high,
-                    seen_segments,
-                )
-            else:
-                added += _add_segment(
-                    board,
-                    _to_mm(cursor),
-                    fixed,
-                    high,
-                    fixed,
-                    seen_segments,
-                )
-
-    add_side(False, panel.top, panel.left, panel.right)
-    add_side(True, panel.right, panel.top, panel.bottom)
-    add_side(False, panel.bottom, panel.left, panel.right)
-    add_side(True, panel.left, panel.top, panel.bottom)
+    for rail in rail_rectangles(layout):
+        _append_segment(board, rail.left, rail.top, rail.right, rail.top)
+        _append_segment(board, rail.right, rail.top, rail.right, rail.bottom)
+        _append_segment(board, rail.right, rail.bottom, rail.left, rail.bottom)
+        _append_segment(board, rail.left, rail.bottom, rail.left, rail.top)
+        added += 4
     return added
 
 
@@ -378,8 +318,6 @@ def _add_marker(
 
 def apply_panelization(board, config: PanelConfig) -> tuple[PanelLayout, int, int]:
     if has_panel_marker(board):
-        if not has_only_single_board_outline(board):
-            raise PanelizerError("already_panelized")
         restore_single_board(board)
 
     try:
@@ -422,7 +360,7 @@ def apply_panelization(board, config: PanelConfig) -> tuple[PanelLayout, int, in
                 if shifted_key is not None:
                     seen_segments.add(shifted_key)
 
-    added_edges += _add_outer_outline(board, layout, seen_segments)
+    added_edges += _add_rail_rectangles(board, layout)
     mark_count = 0
     for spec in mark_positions(layout):
         _add_mark(board, config, spec)
@@ -432,9 +370,13 @@ def apply_panelization(board, config: PanelConfig) -> tuple[PanelLayout, int, in
     return layout, added_edges, mark_count, len(annotation_ids)
 
 
-def make_backup(path: Path) -> Path:
+def make_backup(board, path: Path) -> Path:
     candidate = path.with_name(f"{path.name}.bak")
-    shutil.copy2(path, candidate)
+    with tempfile.TemporaryDirectory() as temp_dir:
+        snapshot = Path(temp_dir) / path.name
+        if not pcbnew.SaveBoard(str(snapshot), board):
+            raise PanelizerError("save_failed")
+        shutil.copy2(snapshot, candidate)
     return candidate
 
 
@@ -443,10 +385,13 @@ def panelize_and_save(board, config: PanelConfig) -> ApplyResult:
     if not filename:
         raise PanelizerError("no_board_file")
     path = Path(filename)
+    fixed_backup = path.with_name(f"{path.name}.bak")
 
-    if not pcbnew.SaveBoard(str(path), board):
-        raise PanelizerError("save_failed")
-    backup = make_backup(path)
+    if has_panel_marker(board):
+        restore_single_board(board)
+        backup = fixed_backup if fixed_backup.is_file() else make_backup(board, path)
+    else:
+        backup = make_backup(board, path)
 
     layout, added_edges, mark_count, dimension_count = apply_panelization(board, config)
     if not pcbnew.SaveBoard(str(path), board):
